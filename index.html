@@ -539,7 +539,7 @@ function settingsItem(item,type,index,total){
 function modelSettingsItem(item,index,total){
   const ref=modelRefValue(item);
   const line=item.line||modelLine(item.id,item.name);
-  const complete=Number.isFinite(Number(item.cabedalCost))&&Number.isFinite(Number(item.totalCost));
+  const complete=item.cabedalCost!==null&&item.cabedalCost!==undefined&&item.cabedalCost!==""&&item.totalCost!==null&&item.totalCost!==undefined&&item.totalCost!==""&&Number.isFinite(Number(item.cabedalCost))&&Number.isFinite(Number(item.totalCost));
   return '<div class="setting-item"><div style="min-width:0;flex:1"><strong>'+esc(ref?('Ref. '+ref+' · '+item.name):item.name)+'</strong><div class="sub" style="margin-top:4px">Linha '+esc(line)+' · '+(complete?('Cabedal '+money(item.cabedalCost)+' · Total '+money(item.totalCost)):'Custos vindos do catálogo oficial ou pendentes')+'</div></div><div class="mini-actions"><button data-edit-model="'+item.id+'" aria-label="Editar ficha">Ficha</button><button data-move="up" data-id="'+item.id+'" data-type="models" '+(index===0?'disabled':'')+'>↑</button><button data-move="down" data-id="'+item.id+'" data-type="models" '+(index===total-1?'disabled':'')+'>↓</button><button class="remove" data-remove="'+item.id+'" data-type="models">×</button></div></div>';
 }
 function mountingSettingsItem(item,index,total){
@@ -742,7 +742,7 @@ if("serviceWorker" in navigator)navigator.serviceWorker.register("sw.js").catch(
   const localSheet=ref=>{
     const m=data.settings.models.find(x=>localModelRef(x)===String(ref).toUpperCase());
     if(!m)return null;
-    const complete=Number.isFinite(Number(m.cabedalCost))&&Number.isFinite(Number(m.totalCost));
+    const complete=m.cabedalCost!==null&&m.cabedalCost!==undefined&&m.cabedalCost!==""&&m.totalCost!==null&&m.totalCost!==undefined&&m.totalCost!==""&&Number.isFinite(Number(m.cabedalCost))&&Number.isFinite(Number(m.totalCost));
     return{ref:localModelRef(m),model:m.name,line:m.line||modelLine(m.id,m.name),cabedal:complete?Number(m.cabedalCost):null,total:complete?Number(m.totalCost):null,complete,usesPalmilha:m.usesPalmilha!==false,alert:complete?"":"Ficha local com custos incompletos."};
   };
   const sheetForRef=ref=>{const local=localSheet(ref);return local?.complete?local:(CATALOG[String(ref)]||local||null)};
