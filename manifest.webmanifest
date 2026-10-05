@@ -1,0 +1,19 @@
+{
+  "name": "Produção Semanal",
+  "short_name": "Produção",
+  "description": "Acompanhamento semanal da produção de sandálias.",
+  "lang": "pt-BR",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#EDF0F3",
+  "theme_color": "#18212E",
+  "icons": [
+    {
+      "src": "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 180 180'%3E%3Crect width='180' height='180' rx='38' fill='%2318212e'/%3E%3Cpath d='M45 126V96h20v30H45zm35 0V69h20v57H80zm35 0V44h20v82h-20z' fill='%23edf0f3'/%3E%3Ccircle cx='135' cy='44' r='9' fill='%23c98a00'/%3E%3C/svg%3E",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
