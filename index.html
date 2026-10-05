@@ -101,7 +101,22 @@ footer{color:var(--soft);font-size:.78rem;text-align:center;padding:8px 0 24px}
 @media(max-width:400px){.wrap{padding:12px}.meter-num{font-size:2.65rem}nav button{font-size:.82rem}.form-grid{grid-template-columns:1fr}.summary-grid{gap:8px}.summary-stat{padding:9px}.days{grid-template-columns:repeat(4,1fr)}.mounting-item{grid-template-columns:minmax(0,1fr) 100px}.mounting-item .mini-actions{grid-column:1/-1;justify-content:flex-end}}
 @media(prefers-reduced-motion:reduce){.meter-fill,.bar span{transition:none}}
 @media(display-mode:standalone){.install-help{display:none}}
-</style>
+
+/* STOCK_PANEL_V1 */
+.stock-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px}
+.stock-sector-card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:13px}
+.stock-sector-head{display:flex;justify-content:space-between;gap:8px;align-items:baseline;font-size:.9rem}
+.stock-sector-head span{color:var(--soft);font-size:.78rem;white-space:nowrap}
+.stock-big{font-size:1.35rem;font-weight:800;font-variant-numeric:tabular-nums;margin:8px 0 3px}
+.stock-total{border-color:var(--ink)}
+.stock-total-value{font-size:2.25rem;font-weight:800;font-variant-numeric:tabular-nums;letter-spacing:-.03em}
+.stock-muted{color:var(--soft);font-size:.78rem}
+.stock-pending{font-size:.72rem;color:var(--live);font-weight:750}
+.stock-warning{margin-top:8px;padding:8px 9px;border-radius:7px;background:var(--track);color:var(--live);font-size:.8rem;font-weight:650}
+.stock-warning-inline{color:var(--live);font-weight:700}
+.stock-detail .calc strong{color:var(--ink)}
+@media(max-width:520px){.stock-grid{grid-template-columns:1fr}.stock-sector-card{padding:12px}}
+\n</style>
 </head>
 <body>
 <div class="wrap">
@@ -111,14 +126,14 @@ footer{color:var(--soft);font-size:.78rem;text-align:center;padding:8px 0 24px}
   </header>
 
   <nav role="tablist" aria-label="Navegação principal">
-    <button role="tab" aria-selected="true" data-tab="week">Semana</button>
+    <button role="tab" aria-selected="true" data-tab="week">Semana</button>\n    <button role="tab" aria-selected="false" data-tab="stock">Estoque</button>
     <button role="tab" aria-selected="false" data-tab="entry">Lançar</button>
     <button role="tab" aria-selected="false" data-tab="history">Histórico</button>
     <button role="tab" aria-selected="false" data-tab="settings">Ajustes</button>
   </nav>
 
   <main>
-    <section id="tab-week"></section>
+    <section id="tab-week"></section>\n    <section id="tab-stock" hidden></section>
     <section id="tab-entry" hidden></section>
     <section id="tab-history" hidden></section>
     <section id="tab-settings" hidden></section>
@@ -610,5 +625,250 @@ makeIcon();render();
 if(!data.onboardingDone)setTimeout(onboarding,80);
 if("serviceWorker" in navigator)navigator.serviceWorker.register("sw.js").catch(()=>{});
 </script>
-</body>
+\n<!-- STOCK_PANEL_V1 -->\n<script>\n(function stockPanelBootstrap(catalog, catalogUpdatedAt){
+  const STOCK_SECTORS=[
+    {id:"cabedal",name:"Cabedal",costKey:"cabedal"},
+    {id:"solado",name:"Solados",costKey:"solado"},
+    {id:"palmilha",name:"Palmilhas",costKey:"palmilha"},
+    {id:"produto_pronto",name:"Produto pronto",costKey:"total"}
+  ];
+  const CATALOG=Object.fromEntries(catalog.map(x=>[String(x.ref),x]));
+  const refs=Object.values(CATALOG).sort((a,b)=>String(a.ref).localeCompare(String(b.ref),"pt-BR",{numeric:true}));
+  if(!Array.isArray(data.stockLedger))data.stockLedger=[];
+  data.stockCatalogUpdatedAt=catalogUpdatedAt;
+
+  const stockFmt=n=>Number(n||0).toLocaleString("pt-BR",{maximumFractionDigits:2});
+  const stockMoney=n=>Number(n||0).toLocaleString("pt-BR",{style:"currency",currency:"BRL"});
+  const parseQty=v=>{
+    const raw=String(v??"").trim().replace(/\s/g,"");
+    if(!raw)return NaN;
+    return Number(raw.includes(",")?raw.replace(/\./g,"").replace(",","."):raw);
+  };
+  const sectorById=id=>STOCK_SECTORS.find(s=>s.id===id);
+  const normalizeColor=value=>{
+    const raw=String(value||"").trim();
+    if(!raw)return"";
+    const k=raw.toLocaleLowerCase("pt-BR").normalize("NFD").replace(/[\u0300-\u036f]/g,"");
+    if(k==="preto")return"Preto";
+    if(k==="rose"||k==="rosa")return"Rose";
+    if(k==="off"||k==="off white"||k==="off-white"||k==="branco")return"Off White";
+    if(k==="caramelo")return"Caramelo";
+    if(k==="ouro"||k==="ouro light"||k==="ourolight")return"Ouro Light";
+    return raw.replace(/\s+/g," ");
+  };
+  const movementDelta=m=>(m.direction==="out"?-1:1)*(Number(m.qty)||0);
+  const itemKey=(sector,ref,color)=>[sector,String(ref),normalizeColor(color).toLocaleLowerCase("pt-BR")].join("|");
+
+  function balances(excludeId=null){
+    const map=new Map();
+    for(const m of data.stockLedger){
+      if(!m||m.id===excludeId)continue;
+      const color=normalizeColor(m.color)||"Sem cor";
+      const key=itemKey(m.sector,m.ref,color);
+      const current=map.get(key)||{sector:m.sector,ref:String(m.ref),color,qty:0};
+      current.qty+=movementDelta(m);
+      map.set(key,current);
+    }
+    return [...map.values()];
+  }
+
+  function costInfo(sector,ref){
+    const sheet=CATALOG[String(ref)];
+    const sectorInfo=sectorById(sector);
+    if(!sheet)return{ok:false,message:"Referência sem ficha de custo cadastrada."};
+    if(sector==="palmilha"&&!sheet.usesPalmilha)return{ok:false,blocked:true,message:"Esta referência não usa palmilha."};
+    if(sector==="produto_pronto"&&!sheet.complete){
+      return{ok:false,message:sheet.alert||"Ficha com custos incompletos. O produto pronto não será valorizado até a ficha ser concluída."};
+    }
+    const value=sheet[sectorInfo.costKey];
+    if(value===null||value===undefined||value===""||!Number.isFinite(Number(value))){
+      return{ok:false,message:`Falta custo de ${sectorInfo.name.toLocaleLowerCase("pt-BR")} na ficha da Ref. ${sheet.ref}.`};
+    }
+    return{ok:true,cost:Number(value),sheet};
+  }
+
+  function quantityText(pairs){
+    const kits=pairs/(Number(data.settings.pairsPerKit)||6);
+    const sheets=pairs/(Number(data.settings.pairsPerSheet)||72);
+    return `${stockFmt(pairs)} pares · ${stockFmt(kits)} kits · ${stockFmt(sheets)} fichas`;
+  }
+
+  function summary(){
+    const positive=balances().filter(x=>x.qty>0.00001);
+    const bySector={};
+    let totalKnown=0,totalPending=0;
+    for(const s of STOCK_SECTORS)bySector[s.id]={pairs:0,value:0,pendingPairs:0,items:[]};
+    for(const row of positive){
+      const box=bySector[row.sector]||(bySector[row.sector]={pairs:0,value:0,pendingPairs:0,items:[]});
+      const ci=costInfo(row.sector,row.ref);
+      const item={...row,costInfo:ci,value:ci.ok?row.qty*ci.cost:null};
+      box.pairs+=row.qty;
+      if(ci.ok){box.value+=item.value;totalKnown+=item.value}else{box.pendingPairs+=row.qty;totalPending+=row.qty}
+      box.items.push(item);
+    }
+    return{bySector,totalKnown,totalPending,positive};
+  }
+
+  function renderStock(){
+    const root=document.getElementById("tab-stock");
+    if(!root)return;
+    const s=summary();
+    const hasAny=s.positive.length>0;
+    const updated=new Intl.DateTimeFormat("pt-BR",{dateStyle:"short",timeStyle:"short",timeZone:TZ}).format(new Date(catalogUpdatedAt));
+    const sectorCards=STOCK_SECTORS.map(sec=>{
+      const box=s.bySector[sec.id];
+      return `<div class="stock-sector-card">
+        <div class="stock-sector-head"><strong>${esc(sec.name)}</strong><span>${stockFmt(box.pairs)} pares</span></div>
+        <div class="stock-big">${stockMoney(box.value)}${box.pendingPairs?'<span class="stock-pending"> + pendente</span>':""}</div>
+        <div class="stock-muted">${quantityText(box.pairs)}</div>
+        ${box.pendingPairs?`<div class="stock-warning">⚠ ${stockFmt(box.pendingPairs)} pares sem custo calculável neste setor.</div>`:""}
+      </div>`;
+    }).join("");
+
+    const details=STOCK_SECTORS.map(sec=>{
+      const items=(s.bySector[sec.id].items||[]).sort((a,b)=>String(a.ref).localeCompare(String(b.ref),"pt-BR",{numeric:true})||a.color.localeCompare(b.color,"pt-BR"));
+      return `<div class="block stock-detail"><h2>${esc(sec.name)}</h2><p class="sub">Detalhe por referência e cor.</p>
+        ${items.length?items.map(item=>{
+          const ci=item.costInfo;
+          const sheet=CATALOG[item.ref];
+          return `<div class="row">
+            <div class="row-top"><span class="name">Ref. ${esc(item.ref)} · ${esc(item.color)}</span><span class="value">${stockFmt(item.qty)} pares</span></div>
+            <div class="votes">${esc(sheet?.model||"Modelo não informado")} · ${quantityText(item.qty)}</div>
+            ${ci.ok
+              ?`<div class="calc">${stockFmt(item.qty)} pares × ${stockMoney(ci.cost)} = <strong>${stockMoney(item.value)}</strong></div>`
+              :`<div class="stock-warning">⚠ ${esc(ci.message)}</div>`}
+          </div>`;
+        }).join(""):'<div class="empty">Nenhum saldo neste setor.</div>'}
+      </div>`;
+    }).join("");
+
+    const history=[...data.stockLedger].sort((a,b)=>String(b.createdAt||b.date).localeCompare(String(a.createdAt||a.date))).slice(0,30);
+    root.innerHTML=`
+      <div class="block stock-total">
+        <div class="sub">Valor total parado na fábrica</div>
+        <div class="stock-total-value">${stockMoney(s.totalKnown)}</div>
+        <div class="stock-muted">Soma dos valores calculáveis dos 4 setores.</div>
+        ${s.totalPending?`<div class="stock-warning">⚠ Existem ${stockFmt(s.totalPending)} pares com custo pendente. O total acima é parcial e não usa R$ 0 para completar a conta.</div>`:""}
+      </div>
+
+      <div class="stock-grid">${sectorCards}</div>
+
+      <form class="block" id="stock-form">
+        <h2>Lançar estoque</h2>
+        <p class="sub">Use Entrada para saldo inicial ou recebimentos. Use Saída para consumo, expedição ou correção.</p>
+        <div class="form-grid">
+          <div class="field"><label for="stock-date">Data</label><input id="stock-date" type="date" value="${spDate()}"></div>
+          <div class="field"><label for="stock-direction">Movimento</label><select id="stock-direction"><option value="in">Entrada</option><option value="out">Saída</option></select></div>
+        </div>
+        <div class="form-grid">
+          <div class="field"><label for="stock-sector">Setor</label><select id="stock-sector">${STOCK_SECTORS.map(x=>`<option value="${x.id}">${esc(x.name)}</option>`).join("")}</select></div>
+          <div class="field"><label for="stock-ref">Referência</label><select id="stock-ref">${refs.map(x=>`<option value="${esc(x.ref)}">${esc(x.ref)} · ${esc(x.model||"")}</option>`).join("")}</select></div>
+        </div>
+        <div class="field"><label for="stock-color">Cor</label><input id="stock-color" list="stock-colors" placeholder="Ex.: Preto" autocomplete="off"><datalist id="stock-colors"><option value="Preto"><option value="Caramelo"><option value="Ouro Light"><option value="Rose"><option value="Off White"></datalist></div>
+        <div class="form-grid">
+          <div class="field"><label for="stock-unit">Unidade</label><select id="stock-unit"><option value="pairs">Pares</option><option value="kits">Kits (${stockFmt(data.settings.pairsPerKit)} pares)</option><option value="sheets">Fichas (${stockFmt(data.settings.pairsPerSheet)} pares)</option></select></div>
+          <div class="field"><label for="stock-qty">Quantidade</label><input id="stock-qty" inputmode="decimal" placeholder="0" autocomplete="off"></div>
+        </div>
+        <div class="field"><label for="stock-note">Observação opcional</label><input id="stock-note" placeholder="Ex.: saldo físico, recebimento, expedição"></div>
+        <div id="stock-cost-hint" class="calc"></div>
+        <button class="btn primary full" id="stock-save" type="submit">Salvar movimento</button>
+      </form>
+
+      ${!hasAny?`<div class="notice">O painel começa com saldo zerado. Lance uma vez o saldo físico atual de cada setor como <strong>Entrada</strong>. Os lançamentos antigos da aba Produção não foram convertidos automaticamente porque palmilhas e solados históricos estavam registrados por linha, sem referência e cor.</div>`:""}
+
+      ${details}
+
+      <div class="block"><h2>Movimentos recentes</h2><p class="sub">Últimos 30 lançamentos do estoque.</p>
+        ${history.length?history.map(m=>`<div class="row"><div class="row-top"><div><span class="name">${m.direction==="out"?"Saída":"Entrada"} · ${esc(sectorById(m.sector)?.name||m.sector)}</span><div class="votes">${fmtDate(m.date)} · Ref. ${esc(m.ref)} · ${esc(normalizeColor(m.color)||"Sem cor")} · ${stockFmt(m.qty)} pares${m.note?` · ${esc(m.note)}`:""}</div></div><button class="icon-btn danger" type="button" data-stock-delete="${esc(m.id)}">Apagar</button></div></div>`).join(""):'<div class="empty">Nenhum movimento lançado.</div>'}
+      </div>
+
+      <div class="block"><h2>Custos das fichas</h2><p class="sub">Catálogo incorporado a partir da base “Referências e Custos” do Registro Operacional.</p>
+        <div class="calc">Atualização do catálogo: ${esc(updated)}. O site usa custo de cabedal, solado, palmilha e custo total separadamente.</div>
+      </div>`;
+
+    const form=document.getElementById("stock-form");
+    const sectorEl=document.getElementById("stock-sector");
+    const refEl=document.getElementById("stock-ref");
+    const qtyEl=document.getElementById("stock-qty");
+    const unitEl=document.getElementById("stock-unit");
+    const hint=document.getElementById("stock-cost-hint");
+    const saveBtn=document.getElementById("stock-save");
+
+    function qtyPairs(){
+      const q=parseQty(qtyEl.value);
+      if(!Number.isFinite(q)||q<=0)return NaN;
+      const factor=unitEl.value==="kits"?(Number(data.settings.pairsPerKit)||6):unitEl.value==="sheets"?(Number(data.settings.pairsPerSheet)||72):1;
+      return q*factor;
+    }
+    function refreshHint(){
+      const ci=costInfo(sectorEl.value,refEl.value);
+      const pairs=qtyPairs();
+      saveBtn.disabled=!!ci.blocked;
+      if(!ci.ok){hint.innerHTML=`<span class="stock-warning-inline">⚠ ${esc(ci.message)}</span>`;return}
+      if(Number.isFinite(pairs)&&Math.abs(pairs-Math.round(pairs))<.000001){
+        hint.innerHTML=`Custo unitário: <strong>${stockMoney(ci.cost)}</strong> · ${stockFmt(pairs)} pares × ${stockMoney(ci.cost)} = <strong>${stockMoney(pairs*ci.cost)}</strong>`;
+      }else{
+        hint.innerHTML=`Custo unitário deste setor: <strong>${stockMoney(ci.cost)}</strong>`;
+      }
+    }
+    sectorEl.onchange=refreshHint;
+    refEl.onchange=refreshHint;
+    qtyEl.oninput=refreshHint;
+    unitEl.onchange=refreshHint;
+    refreshHint();
+
+    form.onsubmit=e=>{
+      e.preventDefault();
+      const date=document.getElementById("stock-date").value;
+      const direction=document.getElementById("stock-direction").value;
+      const sector=sectorEl.value;
+      const ref=refEl.value;
+      const color=normalizeColor(document.getElementById("stock-color").value);
+      const note=document.getElementById("stock-note").value.trim();
+      const pairs=qtyPairs();
+      const ci=costInfo(sector,ref);
+      if(!date){showToast("Escolha a data.");return}
+      if(!color){showToast("Informe a cor.");return}
+      if(!Number.isFinite(pairs)||pairs<=0||Math.abs(pairs-Math.round(pairs))>.000001){showToast("A quantidade precisa resultar em um número inteiro de pares.");return}
+      if(ci.blocked){showToast(ci.message);return}
+      const qty=Math.round(pairs);
+      if(direction==="out"){
+        const current=balances().find(x=>itemKey(x.sector,x.ref,x.color)===itemKey(sector,ref,color))?.qty||0;
+        if(qty>current){showToast(`Saldo insuficiente: há ${stockFmt(current)} pares neste item.`);return}
+      }
+      data.stockLedger.push({id:uid("stk"),date,direction,sector,ref,color,qty,note,createdAt:new Date().toISOString()});
+      save();renderStock();showToast("Movimento de estoque salvo.");
+    };
+
+    document.querySelectorAll("[data-stock-delete]").forEach(btn=>btn.onclick=()=>{
+      const id=btn.dataset.stockDelete;
+      const movement=data.stockLedger.find(x=>x.id===id);
+      if(!movement)return;
+      const after=balances(id);
+      const key=itemKey(movement.sector,movement.ref,movement.color);
+      const would=after.find(x=>itemKey(x.sector,x.ref,x.color)===key)?.qty||0;
+      if(would<-.00001){showToast("Não é possível apagar: o saldo desse item ficaria negativo.");return}
+      confirmAction({title:"Apagar movimento?",message:`${movement.direction==="out"?"Saída":"Entrada"} de ${stockFmt(movement.qty)} pares da Ref. ${movement.ref} · ${movement.color}.`,confirmText:"Apagar",danger:true,onConfirm:()=>{
+        data.stockLedger=data.stockLedger.filter(x=>x.id!==id);save();renderStock();showToast("Movimento apagado.");
+      }});
+    });
+  }
+
+  const oldRender=render;
+  render=function(){
+    if(ui.tab==="stock"){ensureWeek();renderStock();return}
+    oldRender();
+  };
+
+  switchTab=function(tab){
+    ui.tab=tab;
+    document.querySelectorAll("nav [role=tab]").forEach(b=>b.setAttribute("aria-selected",b.dataset.tab===tab));
+    ["week","stock","entry","history","settings"].forEach(k=>{
+      const el=document.getElementById("tab-"+k);
+      if(el)el.hidden=k!==tab;
+    });
+    document.querySelector(".actions").hidden=tab!=="week";
+    render();
+  };
+})([],"2026-10-05T16:41:39.894Z");\n<\/script>\n</body>
 </html>
