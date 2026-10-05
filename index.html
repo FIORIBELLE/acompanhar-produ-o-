@@ -81,6 +81,7 @@ input[type="date"]{min-height:46px}
 .empty{color:var(--soft);font-size:.9rem;padding:18px 0;text-align:center}
 .settings-list{margin:10px 0}.setting-item{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;align-items:center;padding:8px 0;border-top:1px solid var(--line)}
 .setting-item:first-child{border-top:0}.setting-item input{min-height:42px}
+.mounting-item{grid-template-columns:minmax(0,1fr) 112px auto}.mounting-item .rate-field{position:relative}.mounting-item .rate-field::before{content:"R$";position:absolute;left:10px;top:50%;transform:translateY(-50%);color:var(--soft);font-size:.78rem}.mounting-item .rate-field input{padding-left:32px}
 .mini-actions{display:flex;gap:5px}.mini-actions button{min-width:40px;min-height:40px;border:1px solid var(--line);border-radius:7px;background:var(--card);color:var(--ink);cursor:pointer}
 .mini-actions .remove{color:var(--danger)}
 .days{display:grid;grid-template-columns:repeat(4,1fr);gap:7px;margin:10px 0}
@@ -97,7 +98,7 @@ input[type="date"]{min-height:46px}
 .model-goal-grid{display:grid;grid-template-columns:minmax(0,1fr) 112px;gap:8px;align-items:center;padding:6px 0}.model-goal-grid label{font-size:.9rem}
 .actions{display:flex;gap:8px;margin:0 0 12px}.actions .btn{flex:1}
 footer{color:var(--soft);font-size:.78rem;text-align:center;padding:8px 0 24px}
-@media(max-width:400px){.wrap{padding:12px}.meter-num{font-size:2.65rem}nav button{font-size:.82rem}.form-grid{grid-template-columns:1fr}.summary-grid{gap:8px}.summary-stat{padding:9px}.days{grid-template-columns:repeat(4,1fr)}}
+@media(max-width:400px){.wrap{padding:12px}.meter-num{font-size:2.65rem}nav button{font-size:.82rem}.form-grid{grid-template-columns:1fr}.summary-grid{gap:8px}.summary-stat{padding:9px}.days{grid-template-columns:repeat(4,1fr)}.mounting-item{grid-template-columns:minmax(0,1fr) 100px}.mounting-item .mini-actions{grid-column:1/-1;justify-content:flex-end}}
 @media(prefers-reduced-motion:reduce){.meter-fill,.bar span{transition:none}}
 @media(display-mode:standalone){.install-help{display:none}}
 </style>
@@ -142,13 +143,17 @@ const STORAGE_KEY="acompanhar_producao_v2";
 const TZ="America/Sao_Paulo";
 const COMPONENTS=[{id:"cabedal",name:"Cabedal"},{id:"palmilha",name:"Palmilhas"},{id:"solado",name:"Solado"}];
 const DEFAULTS={
-  version:2,
+  version:3,
   settings:{
     pairsPerSheet:72,pairsPerKit:6,
     models:[
       {id:"m501",name:"501",active:true},{id:"m506",name:"506",active:true},
       {id:"m507",name:"507",active:true},{id:"m509",name:"509",active:true},
       {id:"m601",name:"601",active:true}
+    ],
+    mountings:[
+      {id:"bruno_barbara",name:"Bruno e Bárbara",rate:2.60,active:true},
+      {id:"jeferson",name:"Jeferson",rate:4.00,active:true}
     ],
     workDays:[1,2,3,4,5]
   },
@@ -165,13 +170,24 @@ function loadData(){
     if(!raw||typeof raw!=="object")return clone(DEFAULTS);
     const merged={...clone(DEFAULTS),...raw,settings:{...clone(DEFAULTS.settings),...(raw.settings||{})},weeks:raw.weeks||{}};
     merged.settings.models=normalizeItems(merged.settings.models,DEFAULTS.settings.models);
+    merged.settings.mountings=normalizeMountings(merged.settings.mountings,DEFAULTS.settings.mountings);
     merged.settings.workDays=Array.isArray(merged.settings.workDays)?merged.settings.workDays.filter(n=>Number.isInteger(n)&&n>=0&&n<=6):[1,2,3,4,5];
+    const defaultMounting=merged.settings.mountings.find(x=>x.active!==false)?.id||merged.settings.mountings[0].id;
+    for(const w of Object.values(merged.weeks))for(const e of w.entries||[]){
+      if(!e.mountingId)e.mountingId=defaultMounting;
+      if(!e.mountingName)e.mountingName=merged.settings.mountings.find(x=>x.id===e.mountingId)?.name||"Montagem";
+    }
+    merged.version=3;
     return merged;
   }catch(_){return clone(DEFAULTS)}
 }
 function normalizeItems(items,fallback){
   if(!Array.isArray(items)||!items.length)return clone(fallback);
   return items.filter(x=>x&&x.id&&x.name).map(x=>({id:String(x.id),name:String(x.name),active:x.active!==false}));
+}
+function normalizeMountings(items,fallback){
+  if(!Array.isArray(items)||!items.length)return clone(fallback);
+  return items.filter(x=>x&&x.id&&x.name).map(x=>({id:String(x.id),name:String(x.name),rate:Math.max(0,Number(x.rate)||0),active:x.active!==false}));
 }
 function save(){
   localStorage.setItem(STORAGE_KEY,JSON.stringify(data));
@@ -190,13 +206,25 @@ function weekEnd(key){return addDays(key,6)}
 function fmtDate(iso,short=false){if(!iso)return"";return new Intl.DateTimeFormat("pt-BR",short?{day:"2-digit",month:"2-digit"}:{day:"2-digit",month:"2-digit",year:"numeric"}).format(new Date(iso+"T12:00:00Z"))}
 function weekLabel(key){return `${fmtDate(key,true)} a ${fmtDate(weekEnd(key),false)}`}
 const fmt=n=>Number(n||0).toLocaleString("pt-BR",{maximumFractionDigits:1});
+const money=n=>Number(n||0).toLocaleString("pt-BR",{style:"currency",currency:"BRL"});
 const pct=n=>Number(n||0).toLocaleString("pt-BR",{minimumFractionDigits:1,maximumFractionDigits:1})+"%";
 const esc=s=>String(s??"").replace(/[&<>\"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 const uid=prefix=>prefix+"_"+Date.now().toString(36)+Math.random().toString(36).slice(2,7);
 const activeModels=()=>data.settings.models.filter(x=>x.active!==false);
+const activeMountings=()=>data.settings.mountings.filter(x=>x.active!==false);
 function modelsForWeek(key){
   const snapshot=data.weeks[key]?.modelSnapshot;
   return key===currentWeekKey()||!Array.isArray(snapshot)||!snapshot.length?activeModels():snapshot;
+}
+function mountingsForWeek(key){
+  const w=data.weeks[key],snapshot=w?.mountingSnapshot;
+  const ids=new Set((w?.entries||[]).map(e=>e.mountingId));
+  if(key!==currentWeekKey()&&Array.isArray(snapshot)&&snapshot.length){
+    const list=clone(snapshot),known=new Set(list.map(x=>x.id));
+    for(const mt of data.settings.mountings)if(ids.has(mt.id)&&!known.has(mt.id))list.push(clone(mt));
+    return list;
+  }
+  return data.settings.mountings.filter(x=>x.active!==false||ids.has(x.id));
 }
 function itemName(collection,id,fallback){return collection.find(x=>x.id===id)?.name||fallback||"Item removido"}
 function previousGoal(key){
@@ -204,41 +232,49 @@ function previousGoal(key){
   return keys.length?Number(data.weeks[keys[0]].goal):null;
 }
 function ensureWeek(key=currentWeekKey()){
-  if(!data.weeks[key])data.weeks[key]={goal:previousGoal(key),modelGoals:{},entries:[],modelSnapshot:clone(activeModels()),createdAt:new Date().toISOString()};
+  if(!data.weeks[key])data.weeks[key]={goal:previousGoal(key),modelGoals:{},entries:[],modelSnapshot:clone(activeModels()),mountingSnapshot:clone(activeMountings()),createdAt:new Date().toISOString()};
   const w=data.weeks[key];
   if(!Array.isArray(w.entries))w.entries=[];
   if(!w.modelGoals||typeof w.modelGoals!=="object")w.modelGoals={};
   if(!Array.isArray(w.modelSnapshot))w.modelSnapshot=clone(activeModels());
+  if(!Array.isArray(w.mountingSnapshot))w.mountingSnapshot=clone(activeMountings());
   return w;
 }
 function weekData(key){return ensureWeek(key)}
 function syncCurrentSnapshots(){
   const w=ensureWeek(currentWeekKey());
   w.modelSnapshot=clone(activeModels());
+  const ids=new Set((w.entries||[]).map(e=>e.mountingId));
+  w.mountingSnapshot=clone(data.settings.mountings.filter(x=>x.active!==false||ids.has(x.id)));
 }
 function entryInWeek(e,key){return e.date>=key&&e.date<=weekEnd(key)}
 function totalsFor(key){
-  const w=weekData(key),models=modelsForWeek(key),byModel=Object.fromEntries(models.map(m=>[m.id,0]));
+  const w=weekData(key),models=modelsForWeek(key),mountings=mountingsForWeek(key),byModel=Object.fromEntries(models.map(m=>[m.id,0])),byMounting=Object.fromEntries(mountings.map(m=>[m.id,0]));
   const received=Object.fromEntries(COMPONENTS.map(c=>[c.id,0]));
   let done=0;
   for(const e of w.entries.filter(x=>entryInWeek(x,key))){
-    if(e.kind==="finished"){done+=Number(e.qty)||0;if(Object.hasOwn(byModel,e.modelId))byModel[e.modelId]+=Number(e.qty)||0}
+    if(e.kind==="finished"){done+=Number(e.qty)||0;if(Object.hasOwn(byModel,e.modelId))byModel[e.modelId]+=Number(e.qty)||0;if(Object.hasOwn(byMounting,e.mountingId))byMounting[e.mountingId]+=Number(e.qty)||0}
     if(Object.hasOwn(received,e.kind))received[e.kind]+=Number(e.qty)||0;
   }
-  return{received,byModel,done};
+  return{received,byModel,byMounting,done};
 }
-function inventoryUntil(date){
-  const models=activeModels(),stock=Object.fromEntries(models.map(m=>[m.id,Object.fromEntries(COMPONENTS.map(c=>[c.id,0]))]));
+function inventoryByMountingUntil(date){
+  const models=data.settings.models,mountings=data.settings.mountings;
+  const stock=Object.fromEntries(mountings.map(mt=>[mt.id,Object.fromEntries(models.map(m=>[m.id,Object.fromEntries(COMPONENTS.map(c=>[c.id,0]))]))]));
   for(const w of Object.values(data.weeks))for(const e of w.entries||[]){
-    if(e.date>date||!stock[e.modelId])continue;
-    if(e.kind==="finished")for(const c of COMPONENTS)stock[e.modelId][c.id]-=Number(e.qty)||0;
-    else if(Object.hasOwn(stock[e.modelId],e.kind))stock[e.modelId][e.kind]+=Number(e.qty)||0;
+    const mt=stock[e.mountingId],model=mt?.[e.modelId];if(e.date>date||!model)continue;
+    if(e.kind==="finished")for(const c of COMPONENTS)model[c.id]-=Number(e.qty)||0;
+    else if(Object.hasOwn(model,e.kind))model[e.kind]+=Number(e.qty)||0;
   }
   return stock;
 }
-function stockAfterChange(modelId,excludeId,candidate){
+function inventoryUntil(date){
+  const byMounting=inventoryByMountingUntil(date),models=data.settings.models;
+  return Object.fromEntries(models.map(m=>[m.id,Object.fromEntries(COMPONENTS.map(c=>[c.id,Object.values(byMounting).reduce((sum,mt)=>sum+(mt[m.id]?.[c.id]||0),0)]))]));
+}
+function stockAfterChange(mountingId,modelId,excludeId,candidate){
   const balance=Object.fromEntries(COMPONENTS.map(c=>[c.id,0]));
-  const apply=e=>{if(e.modelId!==modelId)return;if(e.kind==="finished")for(const c of COMPONENTS)balance[c.id]-=Number(e.qty)||0;else if(Object.hasOwn(balance,e.kind))balance[e.kind]+=Number(e.qty)||0};
+  const apply=e=>{if(e.mountingId!==mountingId||e.modelId!==modelId)return;if(e.kind==="finished")for(const c of COMPONENTS)balance[c.id]-=Number(e.qty)||0;else if(Object.hasOwn(balance,e.kind))balance[e.kind]+=Number(e.qty)||0};
   for(const w of Object.values(data.weeks))for(const e of w.entries||[])if(e.id!==excludeId)apply(e);
   if(candidate)apply(candidate);
   return balance;
@@ -255,14 +291,14 @@ function workdayStats(key,readOnly=false){
   return{elapsed,remaining,total};
 }
 function weekSummary(key){
-  const w=weekData(key),t=totalsFor(key),goal=Number(w.goal)||0,stock=inventoryUntil(weekEnd(key));
+  const w=weekData(key),t=totalsFor(key),goal=Number(w.goal)||0,stock=inventoryUntil(weekEnd(key)),stockByMounting=inventoryByMountingUntil(weekEnd(key));
   const componentTotals=Object.fromEntries(COMPONENTS.map(c=>[c.id,Object.values(stock).reduce((sum,m)=>sum+Math.max(0,m[c.id]||0),0)]));
   const gargalo=COMPONENTS.reduce((a,b)=>componentTotals[b.id]<componentTotals[a.id]?b:a,COMPONENTS[0]);
-  const possible=Object.values(stock).reduce((sum,m)=>sum+Math.max(0,Math.min(...COMPONENTS.map(c=>m[c.id]||0))),0);
+  const possible=Object.values(stockByMounting).reduce((total,mt)=>total+Object.values(mt).reduce((sum,m)=>sum+Math.max(0,Math.min(...COMPONENTS.map(c=>m[c.id]||0))),0),0);
   const work=workdayStats(key,key<currentWeekKey());
   const avg=work.elapsed?t.done/work.elapsed:0;
   const projection=Math.round(t.done+avg*work.remaining);
-  return{...t,goal,rate:goal?100*t.done/goal:0,gargalo,work,avg,projection,stock,componentTotals,possible};
+  return{...t,goal,rate:goal?100*t.done/goal:0,gargalo,work,avg,projection,stock,stockByMounting,componentTotals,possible};
 }
 function barWidth(value,goal){return goal?Math.max(0,Math.min(100,100*value/goal)):0}
 function fichasText(pairs){
@@ -295,8 +331,8 @@ function goalModal(){
 }
 function onboarding(){
   const key=currentWeekKey();
-  showModal(`<h2 id="modal-title">Comece pela meta</h2><p>Este app controla componentes e pares prontos por modelo.</p>
-    <ul><li>Defina a meta semanal.</li><li>Lance cabedais, palmilhas e solados.</li><li>Ao lançar a produção pronta, os componentes são baixados automaticamente.</li></ul>
+  showModal(`<h2 id="modal-title">Comece pela meta</h2><p>Este app controla componentes e pares prontos por montagem e modelo.</p>
+    <ul><li>Defina a meta semanal.</li><li>Escolha a montagem e lance cabedais, palmilhas e solados.</li><li>Ao lançar a produção pronta, os componentes dessa montagem são baixados automaticamente.</li></ul>
     <div class="field"><label for="first-goal">Meta desta semana em pares</label><input id="first-goal" inputmode="numeric" pattern="[0-9]*" placeholder="Digite a meta"></div>
     <button class="btn primary full" id="start-app">Começar</button>`);
   document.getElementById("start-app").onclick=()=>{
@@ -306,11 +342,16 @@ function onboarding(){
   };
 }
 function renderWeek(key=ui.viewWeek||currentWeekKey()){
-  const readOnly=key!==currentWeekKey(),w=weekData(key),s=weekSummary(key),models=modelsForWeek(key);
+  const readOnly=key!==currentWeekKey(),w=weekData(key),s=weekSummary(key),models=modelsForWeek(key),mountings=mountingsForWeek(key);
   const goal=s.goal,remaining=Math.max(0,goal-s.done),perDay=s.work.remaining?remaining/s.work.remaining:0,maxComponent=Math.max(1,...Object.values(s.componentTotals));
   const modelRows=models.map(m=>{
     const value=s.byModel[m.id]||0,mg=Number(w.modelGoals[m.id])||0,stock=s.stock[m.id]||{},possible=Math.max(0,Math.min(...COMPONENTS.map(c=>stock[c.id]||0)));
     return `<div class="row"><div class="row-top"><span class="name">Modelo ${esc(m.name)}</span><span class="value">${fmt(value)} prontos</span></div><div class="votes">${fichasText(value)}${mg?` · meta ${fmt(mg)} · ${pct(100*value/mg)}`:""}</div>${mg?`<div class="bar secondary"><span style="width:${barWidth(value,mg)}%"></span></div>`:""}<div class="calc">Cabedal ${fmt(stock.cabedal)} · Palmilhas ${fmt(stock.palmilha)} · Solado ${fmt(stock.solado)} · pode produzir ${fmt(possible)} pares</div></div>`;
+  }).join("");
+  const mountingRows=mountings.map(mt=>{
+    const value=s.byMounting[mt.id]||0,amount=value*(Number(mt.rate)||0),stock=s.stockByMounting[mt.id]||{};
+    const possible=Object.values(stock).reduce((sum,m)=>sum+Math.max(0,Math.min(...COMPONENTS.map(c=>m[c.id]||0))),0);
+    return `<div class="row"><div class="row-top"><span class="name">${esc(mt.name)}</span><span class="value">${fmt(value)} prontos</span></div><div class="votes">${money(mt.rate)} por par · valor a pagar ${money(amount)}</div><div class="calc">Componentes disponíveis permitem produzir ${fmt(possible)} pares nesta montagem.</div></div>`;
   }).join("");
   document.getElementById("tab-week").innerHTML=`
     ${readOnly?`<div class="block readonly"><div><strong>Semana arquivada</strong><div class="sub" style="margin:2px 0 0">Somente leitura</div></div><button class="btn small" id="back-current">Voltar à atual</button></div>`:""}
@@ -326,6 +367,7 @@ function renderWeek(key=ui.viewWeek||currentWeekKey()){
       <div class="row"><div class="row-top"><span class="name">Dias de trabalho restantes</span><span class="value">${s.work.remaining}</span></div><div class="calc">No ritmo atual, a semana fecha em ${fmt(s.projection)} pares.</div></div>
       ${goal?(s.work.remaining?`<div class="row"><div class="row-top"><span class="name">Quanto falta por dia</span><span class="value">${fmt(perDay)} pares/dia</span></div><div class="calc">${fmt(remaining)} ÷ ${s.work.remaining} ${s.work.remaining===1?"dia":"dias"} = ${fmt(perDay)} pares/dia</div></div>`:`<div class="row"><div class="row-top"><span class="name">Quanto faltou</span><span class="value">${fmt(remaining)} pares</span></div><div class="calc">Não restam dias de trabalho nesta semana.</div></div>`):""}
     </div>
+    <div class="block"><h2>Produção por montagem</h2><p class="sub">Pares prontos e valor a pagar nesta semana.</p>${mountingRows||'<div class="empty">Cadastre ao menos uma montagem em Ajustes.</div>'}</div>
     <div class="block"><h2>Produção por modelo</h2><p class="sub">Pares prontos na semana e componentes disponíveis.</p>${modelRows||'<div class="empty">Cadastre ao menos um modelo em Ajustes.</div>'}</div>`;
   if(readOnly)document.getElementById("back-current").onclick=()=>{ui.viewWeek=null;render();window.scrollTo({top:0,behavior:"smooth"})};
   document.getElementById("edit-goal").hidden=readOnly;
@@ -335,23 +377,24 @@ function entriesForDate(date){
   return found.sort((a,b)=>String(b.createdAt).localeCompare(String(a.createdAt)));
 }
 function renderEntry(){
-  const date=document.getElementById("entry-date")?.value||spDate(),models=activeModels(),entries=entriesForDate(date);
+  const date=document.getElementById("entry-date")?.value||spDate(),models=activeModels(),mountings=activeMountings(),entries=entriesForDate(date);
   document.getElementById("tab-entry").innerHTML=`
     <form class="block" id="entry-form"><h2>${ui.editingEntry?"Editar lançamento":"Novo lançamento"}</h2><p class="sub">Lance componentes recebidos ou produção pronta.</p>
       <div class="field"><label for="entry-date">Data</label><input id="entry-date" type="date" value="${date}"></div>
+      <div class="field"><label for="entry-mounting">Montagem</label><select id="entry-mounting">${mountings.map(m=>`<option value="${m.id}">${esc(m.name)}</option>`).join("")}</select></div>
       <div class="form-grid"><div class="field"><label for="entry-kind">O que está entrando</label><select id="entry-kind">${COMPONENTS.map(c=>`<option value="${c.id}">${esc(c.name)}</option>`).join("")}<option value="finished">Produto pronto</option></select></div><div class="field"><label for="entry-model">Modelo</label><select id="entry-model">${models.map(m=>`<option value="${m.id}">${esc(m.name)}</option>`).join("")}</select></div></div>
       <div class="form-grid"><div class="field"><label for="entry-unit">Unidade</label><select id="entry-unit"><option value="pairs">Pares</option><option value="kits">Kits de ${fmt(data.settings.pairsPerKit)} pares</option></select></div><div class="field"><label for="entry-qty">Quantidade</label><input id="entry-qty" inputmode="numeric" pattern="[0-9]*" placeholder="0" autocomplete="off"></div></div>
       <div class="quick"><button type="button" data-quick="kit">+1 kit</button><button type="button" data-quick="sheet">+1 ficha (${fmt(data.settings.pairsPerSheet)})</button></div>
       <div class="button-row">${ui.editingEntry?'<button type="button" class="btn" id="cancel-edit">Cancelar</button>':""}<button class="btn primary" type="submit">${ui.editingEntry?"Salvar alteração":"Adicionar lançamento"}</button></div>
     </form>
     <div class="block"><h2>Lançamentos do dia</h2><p class="sub">${fmtDate(date)} · ${entries.reduce((a,e)=>a+Number(e.qty||0),0).toLocaleString("pt-BR")} pares movimentados</p>
-      ${entries.length?entries.map(e=>`<div class="row"><div class="row-top"><div class="entry-main"><div class="entry-title">Modelo ${esc(e.modelName||itemName(data.settings.models,e.modelId))} · ${esc(e.kind==="finished"?"Produto pronto":COMPONENTS.find(c=>c.id===e.kind)?.name||"Componente")}</div><div class="entry-meta">${e.inputUnit==="kits"?`${fmt(e.inputQty)} kits · `:""}${fmt(e.qty)} pares${e.kind==="finished"?" · baixa automática":""}</div></div><div class="entry-actions"><button class="icon-btn" data-edit="${e.id}" data-week="${e.weekKey}">Editar</button><button class="icon-btn danger" data-delete="${e.id}" data-week="${e.weekKey}">Apagar</button></div></div></div>`).join(""):'<div class="empty">Nenhum lançamento nesta data.</div>'}
+      ${entries.length?entries.map(e=>`<div class="row"><div class="row-top"><div class="entry-main"><div class="entry-title">${esc(e.mountingName||itemName(data.settings.mountings,e.mountingId,"Montagem"))} · Modelo ${esc(e.modelName||itemName(data.settings.models,e.modelId))}</div><div class="entry-meta">${esc(e.kind==="finished"?"Produto pronto":COMPONENTS.find(c=>c.id===e.kind)?.name||"Componente")} · ${e.inputUnit==="kits"?`${fmt(e.inputQty)} kits · `:""}${fmt(e.qty)} pares${e.kind==="finished"?" · baixa automática":""}</div></div><div class="entry-actions"><button class="icon-btn" data-edit="${e.id}" data-week="${e.weekKey}">Editar</button><button class="icon-btn danger" data-delete="${e.id}" data-week="${e.weekKey}">Apagar</button></div></div></div>`).join(""):'<div class="empty">Nenhum lançamento nesta data.</div>'}
     </div>`;
   const form=document.getElementById("entry-form");
-  if(!models.length){form.querySelector("button[type=submit]").disabled=true;showToast("Cadastre um modelo em Ajustes.")}
+  if(!models.length||!mountings.length){form.querySelector("button[type=submit]").disabled=true;showToast(!models.length?"Cadastre um modelo em Ajustes.":"Cadastre uma montagem em Ajustes.")}
   if(ui.editingEntry){
     const {weekKey,id}=ui.editingEntry,e=data.weeks[weekKey]?.entries.find(x=>x.id===id);
-    if(e){document.getElementById("entry-date").value=e.date;document.getElementById("entry-kind").value=e.kind;document.getElementById("entry-model").value=e.modelId;document.getElementById("entry-unit").value=e.inputUnit||"pairs";document.getElementById("entry-qty").value=e.inputQty||e.qty}
+    if(e){document.getElementById("entry-date").value=e.date;document.getElementById("entry-mounting").value=e.mountingId;document.getElementById("entry-kind").value=e.kind;document.getElementById("entry-model").value=e.modelId;document.getElementById("entry-unit").value=e.inputUnit||"pairs";document.getElementById("entry-qty").value=e.inputQty||e.qty}
   }
   form.onsubmit=saveEntry;
   document.getElementById("entry-date").onchange=e=>{ui.editingEntry=null;const keep=e.target.value;renderEntry();document.getElementById("entry-date").value=keep};
@@ -364,21 +407,21 @@ function saveEntry(e){
   e.preventDefault();const date=document.getElementById("entry-date").value,raw=document.getElementById("entry-qty").value.trim();
   if(!date){showToast("Escolha a data.");return}
   if(!/^\d+$/.test(raw)||Number(raw)<=0){showToast("Use um número inteiro maior que zero, sem vírgula.");return}
-  const kind=document.getElementById("entry-kind").value,modelId=document.getElementById("entry-model").value,inputUnit=document.getElementById("entry-unit").value,inputQty=Number(raw),qty=inputUnit==="kits"?inputQty*data.settings.pairsPerKit:inputQty;
-  const candidate={kind,modelId,qty},balance=stockAfterChange(modelId,ui.editingEntry?.id,candidate),missing=COMPONENTS.filter(c=>(balance[c.id]||0)<0);
+  const kind=document.getElementById("entry-kind").value,mountingId=document.getElementById("entry-mounting").value,modelId=document.getElementById("entry-model").value,inputUnit=document.getElementById("entry-unit").value,inputQty=Number(raw),qty=inputUnit==="kits"?inputQty*data.settings.pairsPerKit:inputQty;
+  const candidate={kind,mountingId,modelId,qty},balance=stockAfterChange(mountingId,modelId,ui.editingEntry?.id,candidate),missing=COMPONENTS.filter(c=>(balance[c.id]||0)<0);
   if(missing.length){showToast(`Saldo insuficiente de ${missing.map(c=>c.name.toLowerCase()).join(", ")} para esse lançamento.`);return}
   if(ui.editingEntry){
     const oldWeek=data.weeks[ui.editingEntry.weekKey],idx=oldWeek?.entries.findIndex(x=>x.id===ui.editingEntry.id)??-1;
     if(idx<0){showToast("Lançamento não encontrado.");return}
-    const item=oldWeek.entries[idx];oldWeek.entries.splice(idx,1);const newWeek=ensureWeek(weekKeyFor(date));newWeek.entries.push({...item,date,kind,modelId,qty,inputUnit,inputQty,modelName:itemName(data.settings.models,modelId),updatedAt:new Date().toISOString()});ui.editingEntry=null;
-  }else ensureWeek(weekKeyFor(date)).entries.push({id:uid("e"),date,kind,modelId,qty,inputUnit,inputQty,modelName:itemName(data.settings.models,modelId),createdAt:new Date().toISOString()});
+    const item=oldWeek.entries[idx];oldWeek.entries.splice(idx,1);const newWeek=ensureWeek(weekKeyFor(date));newWeek.entries.push({...item,date,kind,mountingId,modelId,qty,inputUnit,inputQty,mountingName:itemName(data.settings.mountings,mountingId),modelName:itemName(data.settings.models,modelId),updatedAt:new Date().toISOString()});ui.editingEntry=null;
+  }else ensureWeek(weekKeyFor(date)).entries.push({id:uid("e"),date,kind,mountingId,modelId,qty,inputUnit,inputQty,mountingName:itemName(data.settings.mountings,mountingId),modelName:itemName(data.settings.models,modelId),createdAt:new Date().toISOString()});
   save();render();showToast("Lançamento salvo.");
 }
 function deleteEntry(weekKey,id){
   const e=data.weeks[weekKey]?.entries.find(x=>x.id===id);if(!e)return;
-  const balance=stockAfterChange(e.modelId,id,null),missing=COMPONENTS.filter(c=>(balance[c.id]||0)<0);
+  const balance=stockAfterChange(e.mountingId,e.modelId,id,null),missing=COMPONENTS.filter(c=>(balance[c.id]||0)<0);
   if(missing.length){showToast(`Não é possível apagar: faltaria ${missing.map(c=>c.name.toLowerCase()).join(", ")}.`);return}
-  confirmAction({title:"Apagar lançamento?",message:`${e.qty} pares do modelo ${e.modelName||itemName(data.settings.models,e.modelId)} serão removidos.`,confirmText:"Apagar",danger:true,onConfirm:()=>{data.weeks[weekKey].entries=data.weeks[weekKey].entries.filter(x=>x.id!==id);save();render();showToast("Lançamento apagado.")}});
+  confirmAction({title:"Apagar lançamento?",message:`${e.qty} pares do modelo ${e.modelName||itemName(data.settings.models,e.modelId)}, da montagem ${e.mountingName||itemName(data.settings.mountings,e.mountingId)}, serão removidos.`,confirmText:"Apagar",danger:true,onConfirm:()=>{data.weeks[weekKey].entries=data.weeks[weekKey].entries.filter(x=>x.id!==id);save();render();showToast("Lançamento apagado.")}});
 }
 function renderHistory(){
   const current=currentWeekKey(),keys=Object.keys(data.weeks).filter(k=>k<current&&(Number(data.weeks[k].goal)>0||(data.weeks[k].entries||[]).length)).sort().reverse();
@@ -388,16 +431,21 @@ function renderHistory(){
 function settingsItem(item,type,index,total){
   return `<div class="setting-item"><input value="${esc(item.name)}" data-name-id="${item.id}" data-type="${type}" aria-label="Nome"><div class="mini-actions"><button data-move="up" data-id="${item.id}" data-type="${type}" ${index===0?"disabled":""} aria-label="Mover para cima">↑</button><button data-move="down" data-id="${item.id}" data-type="${type}" ${index===total-1?"disabled":""} aria-label="Mover para baixo">↓</button><button class="remove" data-remove="${item.id}" data-type="${type}" aria-label="Remover">×</button></div></div>`;
 }
+function mountingSettingsItem(item,index,total){
+  const rate=Number(item.rate||0).toLocaleString("pt-BR",{minimumFractionDigits:2,maximumFractionDigits:2});
+  return `<div class="setting-item mounting-item"><input value="${esc(item.name)}" data-name-id="${item.id}" data-type="mountings" aria-label="Nome da montagem"><div class="rate-field"><input value="${rate}" inputmode="decimal" data-rate-id="${item.id}" aria-label="Valor por par"></div><div class="mini-actions"><button data-move="up" data-id="${item.id}" data-type="mountings" ${index===0?"disabled":""} aria-label="Mover para cima">↑</button><button data-move="down" data-id="${item.id}" data-type="mountings" ${index===total-1?"disabled":""} aria-label="Mover para baixo">↓</button><button class="remove" data-remove="${item.id}" data-type="mountings" aria-label="Remover">×</button></div></div>`;
+}
 function backupStatus(){
   if(!data.lastBackup)return{warn:true,text:"Nenhum backup feito ainda."};
   const days=Math.floor((Date.now()-new Date(data.lastBackup).getTime())/86400000);
   return{warn:days>7,text:`Último backup: ${new Intl.DateTimeFormat("pt-BR",{timeZone:TZ,dateStyle:"short",timeStyle:"short"}).format(new Date(data.lastBackup))}${days>7?" · faça um novo backup":""}`};
 }
 function renderSettings(){
-  const models=activeModels(),bs=backupStatus(),days=[{n:1,l:"Seg"},{n:2,l:"Ter"},{n:3,l:"Qua"},{n:4,l:"Qui"},{n:5,l:"Sex"},{n:6,l:"Sáb"},{n:0,l:"Dom"}];
+  const models=activeModels(),mountings=activeMountings(),bs=backupStatus(),days=[{n:1,l:"Seg"},{n:2,l:"Ter"},{n:3,l:"Qua"},{n:4,l:"Qui"},{n:5,l:"Sex"},{n:6,l:"Sáb"},{n:0,l:"Dom"}];
   document.getElementById("tab-settings").innerHTML=`
     <div class="block"><h2>Padrões da fábrica</h2><p class="sub">Esses valores alimentam os botões rápidos e a conversão em fichas.</p><div class="form-grid"><div class="field"><label for="pairs-sheet">Pares por ficha</label><input id="pairs-sheet" inputmode="numeric" value="${data.settings.pairsPerSheet}"></div><div class="field"><label for="pairs-kit">Pares por kit</label><input id="pairs-kit" inputmode="numeric" value="${data.settings.pairsPerKit}"></div></div><button class="btn primary full" id="save-patterns">Salvar padrões</button></div>
-    <div class="block"><h2>Componentes controlados</h2><p class="sub">Cada par pronto baixa automaticamente um cabedal, uma palmilha e um solado do mesmo modelo.</p><div class="summary-grid">${COMPONENTS.map(c=>`<div class="summary-stat"><strong>${esc(c.name)}</strong><span>controle em pares</span></div>`).join("")}</div></div>
+    <div class="block"><h2>Componentes controlados</h2><p class="sub">Cada par pronto baixa automaticamente um cabedal, uma palmilha e um solado da mesma montagem e do mesmo modelo.</p><div class="summary-grid">${COMPONENTS.map(c=>`<div class="summary-stat"><strong>${esc(c.name)}</strong><span>controle em pares</span></div>`).join("")}</div></div>
+    <div class="block"><h2>Montagens</h2><p class="sub">Defina as equipes e o valor pago por par pronto. Os valores das semanas anteriores ficam preservados.</p><div class="settings-list">${mountings.map((x,i)=>mountingSettingsItem(x,i,mountings.length)).join("")}</div><button class="btn full" id="add-mounting">Adicionar montagem</button></div>
     <div class="block"><h2>Modelos</h2><div class="settings-list">${models.map((x,i)=>settingsItem(x,"models",i,models.length)).join("")}</div><button class="btn full" data-add-item="models">Adicionar modelo</button></div>
     <div class="block"><h2>Dias de trabalho</h2><p class="sub">A semana sempre começa na segunda-feira.</p><div class="days">${days.map(d=>`<label class="day-check"><input type="checkbox" value="${d.n}" ${data.settings.workDays.includes(d.n)?"checked":""}><span>${d.l}</span></label>`).join("")}</div><button class="btn primary full" id="save-days">Salvar dias</button></div>
     <div class="block"><h2>Backup</h2><p class="sub">O backup protege os dados se o iPhone for trocado, restaurado ou perder os dados do Safari.</p><div class="button-row"><button class="btn" id="export-backup">Exportar backup</button><button class="btn" id="import-backup">Importar backup</button></div><div class="backup-status ${bs.warn?"warn":""}">${esc(bs.text)}</div></div>
@@ -405,9 +453,11 @@ function renderSettings(){
   document.getElementById("save-patterns").onclick=savePatterns;
   document.getElementById("save-days").onclick=saveDays;
   document.querySelectorAll("[data-name-id]").forEach(i=>i.onchange=()=>renameItem(i.dataset.type,i.dataset.nameId,i.value));
+  document.querySelectorAll("[data-rate-id]").forEach(i=>i.onchange=()=>saveMountingRate(i.dataset.rateId,i.value));
   document.querySelectorAll("[data-move]").forEach(b=>b.onclick=()=>moveItem(b.dataset.type,b.dataset.id,b.dataset.move));
   document.querySelectorAll("[data-remove]").forEach(b=>b.onclick=()=>removeItem(b.dataset.type,b.dataset.remove));
   document.querySelectorAll("[data-add-item]").forEach(b=>b.onclick=()=>addItem(b.dataset.addItem));
+  document.getElementById("add-mounting").onclick=addMounting;
   document.getElementById("export-backup").onclick=exportBackup;
   document.getElementById("import-backup").onclick=()=>document.getElementById("backup-file").click();
 }
@@ -421,6 +471,11 @@ function saveDays(){
   if(!checked.length){showToast("Marque pelo menos um dia de trabalho.");return}
   data.settings.workDays=checked;save();render();showToast("Dias de trabalho atualizados.");
 }
+function parseMoney(value){const raw=String(value).trim();return Number(raw.includes(",")?raw.replace(/\./g,"").replace(",","."):raw)}
+function saveMountingRate(id,value){
+  const rate=parseMoney(value);if(!Number.isFinite(rate)||rate<0){renderSettings();showToast("Digite um valor válido por par.");return}
+  const item=data.settings.mountings.find(x=>x.id===id);if(item){item.rate=Math.round(rate*100)/100;syncCurrentSnapshots();save();render();showToast("Valor por par atualizado.")}
+}
 function renameItem(type,id,value){
   value=value.trim();if(!value){renderSettings();showToast("O nome não pode ficar vazio.");return}
   const item=data.settings[type].find(x=>x.id===id);if(item){item.name=value;syncCurrentSnapshots();save();render();showToast("Nome atualizado.")}
@@ -430,14 +485,18 @@ function moveItem(type,id,direction){
   const a=all.indexOf(active[from]),b=all.indexOf(active[to]);[all[a],all[b]]=[all[b],all[a]];syncCurrentSnapshots();save();render();
 }
 function removeItem(type,id){
-  const active=data.settings[type].filter(x=>x.active!==false);if(active.length<=1){showToast(`Mantenha pelo menos ${type==="stages"?"uma etapa":"um modelo"}.`);return}
+  const active=data.settings[type].filter(x=>x.active!==false),label=type==="mountings"?"uma montagem":"um modelo";if(active.length<=1){showToast(`Mantenha pelo menos ${label}.`);return}
   const item=data.settings[type].find(x=>x.id===id);
-  confirmAction({title:`Remover ${type==="stages"?"etapa":"modelo"}?`,message:`${item.name} deixará de aparecer nos novos lançamentos. Os registros antigos serão preservados.`,confirmText:"Remover",danger:true,onConfirm:()=>{item.active=false;syncCurrentSnapshots();save();render();showToast("Item removido.")}});
+  confirmAction({title:`Remover ${type==="mountings"?"montagem":"modelo"}?`,message:`${item.name} deixará de aparecer nos novos lançamentos. Os registros antigos serão preservados.`,confirmText:"Remover",danger:true,onConfirm:()=>{item.active=false;syncCurrentSnapshots();save();render();showToast("Item removido.")}});
 }
 function addItem(type){
   const label=type==="stages"?"etapa":"modelo";
   showModal(`<h2 id="modal-title">Adicionar ${label}</h2><div class="field"><label for="new-item">Nome</label><input id="new-item" autocomplete="off"></div><div class="button-row"><button class="btn" data-modal-close>Cancelar</button><button class="btn primary" id="confirm-add">Adicionar</button></div>`);
   document.getElementById("confirm-add").onclick=()=>{const name=document.getElementById("new-item").value.trim();if(!name){showToast("Digite um nome.");return}data.settings[type].push({id:uid(type==="stages"?"s":"m"),name,active:true});syncCurrentSnapshots();save();closeModal();render();showToast("Item adicionado.")};
+}
+function addMounting(){
+  showModal(`<h2 id="modal-title">Adicionar montagem</h2><div class="field"><label for="new-mounting">Nome</label><input id="new-mounting" autocomplete="off" placeholder="Nome da equipe"></div><div class="field"><label for="new-rate">Valor por par</label><input id="new-rate" inputmode="decimal" placeholder="Ex.: 3,50"></div><div class="button-row"><button class="btn" data-modal-close>Cancelar</button><button class="btn primary" id="confirm-mounting">Adicionar</button></div>`);
+  document.getElementById("confirm-mounting").onclick=()=>{const name=document.getElementById("new-mounting").value.trim(),rate=parseMoney(document.getElementById("new-rate").value);if(!name){showToast("Digite o nome da montagem.");return}if(!Number.isFinite(rate)||rate<0){showToast("Digite um valor válido por par.");return}data.settings.mountings.push({id:uid("mt"),name,rate:Math.round(rate*100)/100,active:true});syncCurrentSnapshots();save();closeModal();render();showToast("Montagem adicionada.")};
 }
 function exportBackup(){
   data.lastBackup=new Date().toISOString();save();
@@ -454,10 +513,11 @@ async function importBackup(file){
   finally{document.getElementById("backup-file").value=""}
 }
 function shareText(){
-  const key=currentWeekKey(),s=weekSummary(key);
+  const key=currentWeekKey(),s=weekSummary(key),mountings=mountingsForWeek(key);
   return[
     "ACOMPANHAR PRODUÇÃO",`Semana: ${weekLabel(key)}`,`Meta: ${s.goal?fmt(s.goal)+" pares":"não definida"}`,"",
     "COMPONENTES DISPONÍVEIS",...COMPONENTS.map(c=>`${c.name}: ${fmt(s.componentTotals[c.id]||0)} pares`),"",
+    "POR MONTAGEM",...mountings.map(mt=>`${mt.name}: ${fmt(s.byMounting[mt.id]||0)} pares · ${money((s.byMounting[mt.id]||0)*(Number(mt.rate)||0))}`),"",
     `Pares prontos: ${fmt(s.done)}${s.goal?` · ${pct(s.rate)}`:""}`,`Pode produzir agora: ${fmt(s.possible)} pares`,`Gargalo: ${s.gargalo?.name||"—"}`,`Projeção: ${fmt(s.projection)} pares no ritmo atual`
   ].join("\n");
 }
