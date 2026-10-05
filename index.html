@@ -253,6 +253,7 @@ function mountingsForWeek(key){
   return data.settings.mountings.filter(x=>x.active!==false||ids.has(x.id));
 }
 function itemName(collection,id,fallback){return collection.find(x=>x.id===id)?.name||fallback||"Item removido"}
+function modelRefValue(item){return String(item?.ref||String(item?.name||"").match(/\b\d{3}R?\b/i)?.[0]||"").toUpperCase()}
 function modelLine(modelId,modelName,models){
   const list=models||data.settings.models,item=list.find(x=>x.id===modelId);
   if(item?.line)return String(item.line);
@@ -529,7 +530,7 @@ function settingsItem(item,type,index,total){
   return `<div class="setting-item"><input value="${esc(item.name)}" data-name-id="${item.id}" data-type="${type}" aria-label="Nome"><div class="mini-actions"><button data-move="up" data-id="${item.id}" data-type="${type}" ${index===0?"disabled":""} aria-label="Mover para cima">↑</button><button data-move="down" data-id="${item.id}" data-type="${type}" ${index===total-1?"disabled":""} aria-label="Mover para baixo">↓</button><button class="remove" data-remove="${item.id}" data-type="${type}" aria-label="Remover">×</button></div></div>`;
 }
 function modelSettingsItem(item,index,total){
-  const ref=item.ref||String(item.name||"").match(/\b\d{3}R?\b/i)?.[0]?.toUpperCase()||"";
+  const ref=modelRefValue(item);
   const line=item.line||modelLine(item.id,item.name);
   const complete=Number.isFinite(Number(item.cabedalCost))&&Number.isFinite(Number(item.totalCost));
   return '<div class="setting-item"><div style="min-width:0;flex:1"><strong>'+esc(ref?('Ref. '+ref+' · '+item.name):item.name)+'</strong><div class="sub" style="margin-top:4px">Linha '+esc(line)+' · '+(complete?('Cabedal '+money(item.cabedalCost)+' · Total '+money(item.totalCost)):'Custos vindos do catálogo oficial ou pendentes')+'</div></div><div class="mini-actions"><button data-edit-model="'+item.id+'" aria-label="Editar ficha">Ficha</button><button data-move="up" data-id="'+item.id+'" data-type="models" '+(index===0?'disabled':'')+'>↑</button><button data-move="down" data-id="'+item.id+'" data-type="models" '+(index===total-1?'disabled':'')+'>↓</button><button class="remove" data-remove="'+item.id+'" data-type="models">×</button></div></div>';
@@ -575,7 +576,7 @@ function saveDays(){
   if(!checked.length){showToast("Marque pelo menos um dia de trabalho.");return}
   data.settings.workDays=checked;save();render();showToast("Dias de trabalho atualizados.");
 }
-function parseMoney(value){const raw=String(value).trim();return Number(raw.includes(",")?raw.replace(/\./g,"").replace(",","."):raw)}
+function parseMoney(value){const raw=String(value).trim();if(!raw)return NaN;return Number(raw.includes(",")?raw.replace(/\./g,"").replace(",","."):raw)}
 function saveMountingRate(id,value){
   const rate=parseMoney(value);if(!Number.isFinite(rate)||rate<0){renderSettings();showToast("Digite um valor válido por par.");return}
   const item=data.settings.mountings.find(x=>x.id===id);if(item){item.rate=Math.round(rate*100)/100;syncCurrentSnapshots();save();render();showToast("Valor por par atualizado.")}
@@ -597,7 +598,7 @@ function modelFormHtml(item={}){
   const inferredLine=item.line||modelLine(item.id,item.name)||"500";
   const cab=item.cabedalCost==null?"":Number(item.cabedalCost).toLocaleString("pt-BR",{minimumFractionDigits:2,maximumFractionDigits:2});
   const total=item.totalCost==null?"":Number(item.totalCost).toLocaleString("pt-BR",{minimumFractionDigits:2,maximumFractionDigits:2});
-  return '<div class="form-grid"><div class="field"><label for="model-ref">Referência</label><input id="model-ref" value="'+esc(item.ref||"")+'" placeholder="Ex.: 514"></div><div class="field"><label for="model-line">Linha</label><input id="model-line" inputmode="numeric" value="'+esc(inferredLine==="Outros"?"":inferredLine)+'" placeholder="Ex.: 500"></div></div>'
+  return '<div class="form-grid"><div class="field"><label for="model-ref">Referência</label><input id="model-ref" value="'+esc(modelRefValue(item))+'" placeholder="Ex.: 514"></div><div class="field"><label for="model-line">Linha</label><input id="model-line" inputmode="numeric" value="'+esc(inferredLine==="Outros"?"":inferredLine)+'" placeholder="Ex.: 500"></div></div>'
     +'<div class="field"><label for="model-name">Nome do modelo</label><input id="model-name" value="'+esc(item.name||"")+'" placeholder="Ex.: Flat Nó Duplo"></div>'
     +'<div class="form-grid"><div class="field"><label for="model-cabedal-cost">Custo do cabedal / par</label><input id="model-cabedal-cost" inputmode="decimal" value="'+esc(cab)+'" placeholder="Ex.: 8,35"></div><div class="field"><label for="model-total-cost">Custo total / par</label><input id="model-total-cost" inputmode="decimal" value="'+esc(total)+'" placeholder="Ex.: 22,35"></div></div>'
     +'<label class="day-check" style="width:auto;justify-content:flex-start;gap:10px"><input id="model-uses-insole" type="checkbox" '+(item.usesPalmilha!==false?"checked":"")+'><span>Usa palmilha</span></label>'
@@ -623,7 +624,7 @@ function editModel(id){
   document.getElementById("model-line").oninput=e=>{if(e.target.value==="300")document.getElementById("model-uses-insole").checked=false};
   document.getElementById("save-model-sheet").onclick=()=>{
     const values=readModelForm();if(!values)return;
-    const duplicate=data.settings.models.find(x=>x.id!==id&&x.active!==false&&String(x.ref||"").toUpperCase()===values.ref);
+    const duplicate=data.settings.models.find(x=>x.id!==id&&x.active!==false&&modelRefValue(x)===values.ref);
     if(duplicate){showToast("Essa referência já está cadastrada.");return}
     Object.assign(item,values);syncCurrentSnapshots();save();closeModal();render();showToast("Ficha do modelo atualizada.");
   };
@@ -634,7 +635,7 @@ function addItem(type){
     document.getElementById("model-line").oninput=e=>{if(e.target.value==="300")document.getElementById("model-uses-insole").checked=false};
     document.getElementById("confirm-add").onclick=()=>{
       const values=readModelForm();if(!values)return;
-      const duplicate=data.settings.models.find(x=>x.active!==false&&String(x.ref||"").toUpperCase()===values.ref);
+      const duplicate=data.settings.models.find(x=>x.active!==false&&modelRefValue(x)===values.ref);
       if(duplicate){showToast("Essa referência já está cadastrada.");return}
       data.settings.models.push({id:uid("m"),...values,active:true});syncCurrentSnapshots();save();closeModal();render();showToast("Modelo e ficha de custo adicionados.");
     };
@@ -724,7 +725,7 @@ if("serviceWorker" in navigator)navigator.serviceWorker.register("sw.js").catch(
     const complete=Number.isFinite(Number(m.cabedalCost))&&Number.isFinite(Number(m.totalCost));
     return{ref:localModelRef(m),model:m.name,line:m.line||modelLine(m.id,m.name),cabedal:complete?Number(m.cabedalCost):null,total:complete?Number(m.totalCost):null,complete,usesPalmilha:m.usesPalmilha!==false,alert:complete?"":"Ficha local com custos incompletos."};
   };
-  const sheetForRef=ref=>localSheet(ref)||CATALOG[String(ref)]||null;
+  const sheetForRef=ref=>{const local=localSheet(ref);return local?.complete?local:(CATALOG[String(ref)]||local||null)};
   const allRefSheets=()=>{
     const map=new Map(refs.map(x=>[String(x.ref),x]));
     for(const m of data.settings.models){const s=localSheet(localModelRef(m));if(s?.ref)map.set(String(s.ref),s)}
