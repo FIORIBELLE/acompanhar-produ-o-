@@ -774,13 +774,24 @@ if("serviceWorker" in navigator)navigator.serviceWorker.register("sw.js").catch(
   }
   function balances(excludeId=null){return balanceState(excludeId).rows}
 
+  function lineStandardCost(line,key){
+    const values=refs
+      .filter(x=>String(x.line||"").match(/\d{3}/)?.[0]===String(line))
+      .map(x=>x[key])
+      .filter(v=>v!==null&&v!==undefined&&v!==""&&Number.isFinite(Number(v)))
+      .map(Number);
+    if(!values.length)return null;
+    const counts=new Map();
+    for(const v of values)counts.set(v,(counts.get(v)||0)+1);
+    return [...counts.entries()].sort((a,b)=>b[1]-a[1]||a[0]-b[0])[0][0];
+  }
   function costInfo(sector,ref){
     if(String(ref).startsWith("@line:")){
       const line=String(ref).slice(6),key=sectorById(sector)?.costKey;
       if(sector!=="palmilha"&&sector!=="solado")return{ok:false,message:`${displayRef(ref)} sem referência para aplicar o custo.`};
-      const values=[...new Set(refs.filter(x=>String(x.line||"").match(/\d{3}/)?.[0]===line).map(x=>x[key]).filter(v=>v!==null&&v!==undefined&&v!==""&&Number.isFinite(Number(v))).map(Number))];
-      if(values.length===1)return{ok:true,cost:values[0],sheet:{ref:displayRef(ref),model:`Componente compartilhado da Linha ${line}`}};
-      return{ok:false,message:`${displayRef(ref)} é compartilhada entre modelos, mas há custos diferentes nas fichas técnicas. Revise o custo padrão da linha para valorizar este saldo.`};
+      const value=lineStandardCost(line,key);
+      if(Number.isFinite(value))return{ok:true,cost:value,sheet:{ref:displayRef(ref),model:`Componente compartilhado da Linha ${line}`}};
+      return{ok:false,message:`Falta custo padrão de ${sectorById(sector)?.name.toLocaleLowerCase("pt-BR")||sector} para a Linha ${line}.`};
     }
     if(String(ref).startsWith("@"))return{ok:false,message:"Lançamento sem referência identificável. Informe a referência para valorizar este saldo."};
     const sheet=CATALOG[String(ref)];
@@ -875,7 +886,7 @@ if("serviceWorker" in navigator)navigator.serviceWorker.register("sw.js").catch(
         </div>
         <div class="form-grid">
           <div class="field"><label for="stock-sector">Setor</label><select id="stock-sector">${STOCK_SECTORS.map(x=>`<option value="${x.id}">${esc(x.name)}</option>`).join("")}</select></div>
-          <div class="field"><label for="stock-ref">Referência</label><select id="stock-ref">${refs.map(x=>`<option value="${esc(x.ref)}">${esc(x.ref)} · ${esc(x.model||"")}</option>`).join("")}</select></div>
+          <div class="field"><label for="stock-ref" id="stock-ref-label">Referência</label><select id="stock-ref"></select></div>
         </div>
         <div class="field"><label for="stock-color">Cor</label><input id="stock-color" list="stock-colors" placeholder="Ex.: Preto" autocomplete="off"><datalist id="stock-colors"><option value="Preto"><option value="Caramelo"><option value="Ouro Light"><option value="Rose"><option value="Off White"></datalist></div>
         <div class="form-grid">
@@ -902,11 +913,20 @@ if("serviceWorker" in navigator)navigator.serviceWorker.register("sw.js").catch(
     const form=document.getElementById("stock-form");
     const sectorEl=document.getElementById("stock-sector");
     const refEl=document.getElementById("stock-ref");
+    const refLabel=document.getElementById("stock-ref-label");
     const qtyEl=document.getElementById("stock-qty");
     const unitEl=document.getElementById("stock-unit");
     const hint=document.getElementById("stock-cost-hint");
     const saveBtn=document.getElementById("stock-save");
 
+    function refreshStockTarget(selected){
+      const shared=sectorEl.value==="palmilha"||sectorEl.value==="solado";
+      refLabel.textContent=shared?"Linha":"Referência";
+      refEl.innerHTML=shared
+        ?availableLines().map(line=>`<option value="${linePoolRef(line)}">Linha ${esc(line)}</option>`).join("")
+        :refs.map(x=>`<option value="${esc(x.ref)}">${esc(x.ref)} · ${esc(x.model||"")}</option>`).join("");
+      if(selected&&[...refEl.options].some(o=>o.value===selected))refEl.value=selected;
+    }
     function qtyPairs(){
       const q=parseQty(qtyEl.value);
       if(!Number.isFinite(q)||q<=0)return NaN;
@@ -924,10 +944,11 @@ if("serviceWorker" in navigator)navigator.serviceWorker.register("sw.js").catch(
         hint.innerHTML=`Custo unitário deste setor: <strong>${stockMoney(ci.cost)}</strong>`;
       }
     }
-    sectorEl.onchange=refreshHint;
+    sectorEl.onchange=()=>{refreshStockTarget();refreshHint()};
     refEl.onchange=refreshHint;
     qtyEl.oninput=refreshHint;
     unitEl.onchange=refreshHint;
+    refreshStockTarget();
     refreshHint();
 
     form.onsubmit=e=>{
