@@ -1,5 +1,5 @@
 "use strict";
-const CACHE="acompanhar-producao-shell-v12";
+const CACHE="acompanhar-producao-shell-v13";
 const SHELL=["./","./index.html","./manifest.webmanifest"];
 
 self.addEventListener("install",event=>{
