@@ -712,9 +712,19 @@ if("serviceWorker" in navigator)navigator.serviceWorker.register("sw.js").catch(
       takeWhere(r=>r.ref===exactRef);
     }
     if(allowLineFallback){
+      const lineCode=String(line||"");
+      const rowLineCode=r=>{
+        if(String(r.ref).startsWith("@line:"))return String(r.ref).slice(6);
+        const raw=CATALOG[r.ref]?.line||"";
+        const m=String(raw).match(/\d{3}/);
+        return m?m[0]:"";
+      };
       takeWhere(r=>r.ref===lineRef&&r.color===wantedColor);
       takeWhere(r=>r.ref===lineRef&&r.color==="Sem cor");
       takeWhere(r=>r.ref===lineRef);
+      takeWhere(r=>rowLineCode(r)===lineCode&&r.color===wantedColor);
+      takeWhere(r=>rowLineCode(r)===lineCode&&r.color==="Sem cor");
+      takeWhere(r=>rowLineCode(r)===lineCode);
     }
     if(remaining>0.00001)issues.push(`${sectorById(sector)?.name||sector}: faltaram ${stockFmt(remaining)} pares para baixar na Ref. ${displayRef(exactRef||lineRef)}.`);
   }
