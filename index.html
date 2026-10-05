@@ -163,6 +163,12 @@ const DEFAULTS={
   version:4,
   settings:{
     pairsPerSheet:72,pairsPerKit:6,
+    lineCosts:{
+      "300":{solado:11,palmilha:0,usesPalmilha:false},
+      "500":{solado:6.1,palmilha:3.4,usesPalmilha:true},
+      "600":{solado:7.1,palmilha:4.05,usesPalmilha:true},
+      "800":{solado:3.7,palmilha:3.5,usesPalmilha:true}
+    },
     models:[
       {id:"m501",name:"501",active:true},{id:"m506",name:"506",active:true},
       {id:"m507",name:"507",active:true},{id:"m509",name:"509",active:true},
@@ -189,6 +195,7 @@ function loadData(){
     const merged={...clone(DEFAULTS),...raw,settings:{...clone(DEFAULTS.settings),...(raw.settings||{})},weeks:raw.weeks||{}};
     merged.settings.models=normalizeItems(merged.settings.models,DEFAULTS.settings.models);
     merged.settings.mountings=normalizeMountings(merged.settings.mountings,DEFAULTS.settings.mountings);
+    merged.settings.lineCosts={...clone(DEFAULTS.settings.lineCosts),...(merged.settings.lineCosts||{})};
     merged.settings.workDays=Array.isArray(merged.settings.workDays)?merged.settings.workDays.filter(n=>Number.isInteger(n)&&n>=0&&n<=6):[1,2,3,4,5];
     if(!merged.settings.mountings.some(x=>x.id==="legacy"))merged.settings.mountings.push({id:"legacy",name:"Não informado",rate:0,active:false});
     const defaultMounting="legacy";
@@ -549,12 +556,14 @@ function renderSettings(){
   document.getElementById("tab-settings").innerHTML=`
     <div class="block"><h2>Padrões da fábrica</h2><p class="sub">Esses valores alimentam os botões rápidos e a conversão em fichas.</p><div class="form-grid"><div class="field"><label for="pairs-sheet">Pares por ficha</label><input id="pairs-sheet" inputmode="numeric" value="${data.settings.pairsPerSheet}"></div><div class="field"><label for="pairs-kit">Pares por kit</label><input id="pairs-kit" inputmode="numeric" value="${data.settings.pairsPerKit}"></div></div><button class="btn primary full" id="save-patterns">Salvar padrões</button></div>
     <div class="block"><h2>Componentes controlados</h2><p class="sub">Cada par pronto baixa um cabedal do modelo e uma palmilha e um solado da linha correspondente, sempre na mesma montagem.</p><div class="summary-grid">${COMPONENTS.map(c=>`<div class="summary-stat"><strong>${esc(c.name)}</strong><span>controle em pares</span></div>`).join("")}</div></div>
+    <div class="block"><h2>Custos por linha</h2><p class="sub">Palmilha e solado são compartilhados por linha. Estes valores são os custos oficiais usados no estoque.</p><div class="settings-list">${Object.entries(data.settings.lineCosts||{}).sort(([a],[b])=>a.localeCompare(b,"pt-BR",{numeric:true})).map(([line,c])=>`<div class="row"><div class="row-top"><strong>Linha ${esc(line)}</strong><span>${c.usesPalmilha===false?"Sem palmilha":""}</span></div><div class="form-grid"><div class="field"><label>Solado / par</label><input inputmode="decimal" data-line-cost="${esc(line)}" data-line-key="solado" value="${Number(c.solado||0).toLocaleString("pt-BR",{minimumFractionDigits:2,maximumFractionDigits:2})}"></div><div class="field"><label>Palmilha / par</label><input inputmode="decimal" data-line-cost="${esc(line)}" data-line-key="palmilha" ${c.usesPalmilha===false?"disabled":""} value="${Number(c.palmilha||0).toLocaleString("pt-BR",{minimumFractionDigits:2,maximumFractionDigits:2})}"></div></div></div>`).join("")}</div><button class="btn primary full" id="save-line-costs">Salvar custos das linhas</button></div>
     <div class="block"><h2>Montagens</h2><p class="sub">Defina as equipes e o valor pago por par pronto. Os valores das semanas anteriores ficam preservados.</p><div class="settings-list">${mountings.map((x,i)=>mountingSettingsItem(x,i,mountings.length)).join("")}</div><button class="btn full" id="add-mounting">Adicionar montagem</button></div>
     <div class="block"><h2>Modelos e fichas de custo</h2><p class="sub">No modelo novo, informe referência, linha, custo do cabedal e custo total. Solado e palmilha são herdados da linha.</p><div class="settings-list">${models.map((x,i)=>modelSettingsItem(x,i,models.length)).join("")}</div><button class="btn full" data-add-item="models">Adicionar modelo</button></div>
     <div class="block"><h2>Dias de trabalho</h2><p class="sub">A semana sempre começa na segunda-feira.</p><div class="days">${days.map(d=>`<label class="day-check"><input type="checkbox" value="${d.n}" ${data.settings.workDays.includes(d.n)?"checked":""}><span>${d.l}</span></label>`).join("")}</div><button class="btn primary full" id="save-days">Salvar dias</button></div>
     <div class="block"><h2>Backup</h2><p class="sub">O backup protege os dados se o iPhone for trocado, restaurado ou perder os dados do Safari.</p><div class="button-row"><button class="btn" id="export-backup">Exportar backup</button><button class="btn" id="import-backup">Importar backup</button></div><div class="backup-status ${bs.warn?"warn":""}">${esc(bs.text)}</div></div>
     <div class="block install-help"><h2>Instalar no iPhone</h2><p class="sub">No Safari, toque em Compartilhar e depois em Adicionar à Tela de Início.</p></div>`;
   document.getElementById("save-patterns").onclick=savePatterns;
+  document.getElementById("save-line-costs").onclick=saveLineCosts;
   document.getElementById("save-days").onclick=saveDays;
   document.querySelectorAll("[data-name-id]").forEach(i=>i.onchange=()=>renameItem(i.dataset.type,i.dataset.nameId,i.value));
   document.querySelectorAll("[data-rate-id]").forEach(i=>i.onchange=()=>saveMountingRate(i.dataset.rateId,i.value));
@@ -570,6 +579,17 @@ function savePatterns(){
   const a=document.getElementById("pairs-sheet").value.trim(),b=document.getElementById("pairs-kit").value.trim();
   if(!/^\d+$/.test(a)||Number(a)<=0||!/^\d+$/.test(b)||Number(b)<=0){showToast("Use números inteiros maiores que zero.");return}
   data.settings.pairsPerSheet=Number(a);data.settings.pairsPerKit=Number(b);save();render();showToast("Padrões atualizados.");
+}
+function saveLineCosts(){
+  const inputs=[...document.querySelectorAll("[data-line-cost]")];
+  const next=clone(data.settings.lineCosts||{});
+  for(const input of inputs){
+    const line=input.dataset.lineCost,key=input.dataset.lineKey,value=parseMoney(input.value);
+    if(!Number.isFinite(value)||value<0){showToast("Digite custos válidos para as linhas.");return}
+    if(!next[line])next[line]={solado:0,palmilha:0,usesPalmilha:true};
+    next[line][key]=Math.round(value*100)/100;
+  }
+  data.settings.lineCosts=next;save();render();showToast("Custos das linhas atualizados.");
 }
 function saveDays(){
   const checked=[...document.querySelectorAll(".day-check input:checked")].map(x=>Number(x.value));
@@ -850,15 +870,9 @@ if("serviceWorker" in navigator)navigator.serviceWorker.register("sw.js").catch(
   function balances(excludeId=null){return balanceState(excludeId).rows}
 
   function lineStandardCost(line,key){
-    const values=refs
-      .filter(x=>String(x.line||"").match(/\d{3}/)?.[0]===String(line))
-      .map(x=>x[key])
-      .filter(v=>v!==null&&v!==undefined&&v!==""&&Number.isFinite(Number(v)))
-      .map(Number);
-    if(!values.length)return null;
-    const counts=new Map();
-    for(const v of values)counts.set(v,(counts.get(v)||0)+1);
-    return [...counts.entries()].sort((a,b)=>b[1]-a[1]||a[0]-b[0])[0][0];
+    const configured=data.settings.lineCosts?.[String(line)]?.[key];
+    if(configured!==null&&configured!==undefined&&configured!==""&&Number.isFinite(Number(configured)))return Number(configured);
+    return null;
   }
   function costInfo(sector,ref){
     if(String(ref).startsWith("@line:")){
