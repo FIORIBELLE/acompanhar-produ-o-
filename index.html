@@ -143,7 +143,7 @@ const STORAGE_KEY="acompanhar_producao_v2";
 const TZ="America/Sao_Paulo";
 const COMPONENTS=[{id:"cabedal",name:"Cabedal"},{id:"palmilha",name:"Palmilhas"},{id:"solado",name:"Solado"}];
 const DEFAULTS={
-  version:3,
+  version:4,
   settings:{
     pairsPerSheet:72,pairsPerKit:6,
     models:[
@@ -178,8 +178,9 @@ function loadData(){
     for(const w of Object.values(merged.weeks))for(const e of w.entries||[]){
       if(!e.mountingId)e.mountingId=defaultMounting;
       if(!e.mountingName)e.mountingName=merged.settings.mountings.find(x=>x.id===e.mountingId)?.name||"Montagem";
+      if((e.kind==="palmilha"||e.kind==="solado")&&!e.line)e.line=modelLine(e.modelId,e.modelName,merged.settings.models);
     }
-    merged.version=3;
+    merged.version=4;
     return merged;
   }catch(_){return clone(DEFAULTS)}
 }
@@ -229,6 +230,18 @@ function mountingsForWeek(key){
   return data.settings.mountings.filter(x=>x.active!==false||ids.has(x.id));
 }
 function itemName(collection,id,fallback){return collection.find(x=>x.id===id)?.name||fallback||"Item removido"}
+function modelLine(modelId,modelName,models){
+  const list=models||data.settings.models,label=modelName||list.find(x=>x.id===modelId)?.name||modelId||"";
+  const match=String(label).match(/\d/);return match?match[0]+"00":"Outros";
+}
+function entryLine(e){return e.line||modelLine(e.modelId,e.modelName)}
+function availableLines(){return [...new Set(["300","500","600",...activeModels().map(m=>modelLine(m.id,m.name))])].sort()}
+function possibleForMounting(mt){
+  return Object.entries(mt.lines||{}).reduce((total,[line,parts])=>{
+    const cabedais=Object.entries(mt.models||{}).reduce((sum,[id,m])=>sum+(modelLine(id,m.name)===line?Math.max(0,m.cabedal||0):0),0);
+    return total+Math.max(0,Math.min(cabedais,parts.palmilha||0,parts.solado||0));
+  },0);
+}
 function previousGoal(key){
   const keys=Object.keys(data.weeks).filter(k=>k<key&&Number(data.weeks[k]?.goal)>0).sort().reverse();
   return keys.length?Number(data.weeks[keys[0]].goal):null;
@@ -260,26 +273,53 @@ function totalsFor(key){
   }
   return{received,byModel,byMounting,done};
 }
-function inventoryByMountingUntil(date){
-  const models=data.settings.models,mountings=data.settings.mountings;
-  const stock=Object.fromEntries(mountings.map(mt=>[mt.id,Object.fromEntries(models.map(m=>[m.id,Object.fromEntries(COMPONENTS.map(c=>[c.id,0]))]))]));
-  for(const w of Object.values(data.weeks))for(const e of w.entries||[]){
-    const mt=stock[e.mountingId],model=mt?.[e.modelId];if(e.date>date||!model)continue;
-    if(e.kind==="finished")for(const c of COMPONENTS)model[c.id]-=Number(e.qty)||0;
-    else if(Object.hasOwn(model,e.kind))model[e.kind]+=Number(e.qty)||0;
+function inventoryByMountingUntil(date,excludeId=null,candidate=null){
+  const stock={};
+  const ensureMounting=id=>stock[id]||(stock[id]={models:{},lines:{}});
+  const ensureModel=(mt,id,name)=>mt.models[id]||(mt.models[id]={name:name||itemName(data.settings.models,id),cabedal:0});
+  const ensureLine=(mt,line)=>mt.lines[line]||(mt.lines[line]={palmilha:0,solado:0});
+  const apply=e=>{
+    if(!e||e.id===excludeId||e.date>date)return;
+    const qty=Number(e.qty)||0,mt=ensureMounting(e.mountingId),line=entryLine(e);
+    if(e.kind==="finished"){
+      ensureModel(mt,e.modelId,e.modelName).cabedal-=qty;
+      const shared=ensureLine(mt,line);shared.palmilha-=qty;shared.solado-=qty;
+    }else if(e.kind==="cabedal")ensureModel(mt,e.modelId,e.modelName).cabedal+=qty;
+    else if(e.kind==="palmilha"||e.kind==="solado")ensureLine(mt,line)[e.kind]+=qty;
+  };
+  for(const w of Object.values(data.weeks))for(const e of w.entries||[])apply(e);
+  if(candidate)apply(candidate);
+  for(const mt of data.settings.mountings)ensureMounting(mt.id);
+  for(const mt of Object.values(stock)){
+    for(const m of data.settings.models)ensureModel(mt,m.id,m.name);
+    for(const line of availableLines())ensureLine(mt,line);
   }
   return stock;
 }
 function inventoryUntil(date){
   const byMounting=inventoryByMountingUntil(date),models=data.settings.models;
-  return Object.fromEntries(models.map(m=>[m.id,Object.fromEntries(COMPONENTS.map(c=>[c.id,Object.values(byMounting).reduce((sum,mt)=>sum+(mt[m.id]?.[c.id]||0),0)]))]));
+  return Object.fromEntries(models.map(m=>{
+    const line=modelLine(m.id,m.name);
+    return[m.id,{
+      cabedal:Object.values(byMounting).reduce((sum,mt)=>sum+(mt.models[m.id]?.cabedal||0),0),
+      palmilha:Object.values(byMounting).reduce((sum,mt)=>sum+(mt.lines[line]?.palmilha||0),0),
+      solado:Object.values(byMounting).reduce((sum,mt)=>sum+(mt.lines[line]?.solado||0),0),
+      line
+    }];
+  }));
 }
 function stockAfterChange(mountingId,modelId,excludeId,candidate){
-  const balance=Object.fromEntries(COMPONENTS.map(c=>[c.id,0]));
-  const apply=e=>{if(e.mountingId!==mountingId||e.modelId!==modelId)return;if(e.kind==="finished")for(const c of COMPONENTS)balance[c.id]-=Number(e.qty)||0;else if(Object.hasOwn(balance,e.kind))balance[e.kind]+=Number(e.qty)||0};
-  for(const w of Object.values(data.weeks))for(const e of w.entries||[])if(e.id!==excludeId)apply(e);
-  if(candidate)apply(candidate);
-  return balance;
+  const stock=inventoryByMountingUntil("9999-12-31",excludeId,candidate),mt=stock[mountingId]||{models:{},lines:{}};
+  const line=candidate?.line||modelLine(modelId,candidate?.modelName),model=mt.models[modelId]||{},shared=mt.lines[line]||{};
+  return{cabedal:model.cabedal||0,palmilha:shared.palmilha||0,solado:shared.solado||0};
+}
+function stockProblems(excludeId,candidate){
+  const stock=inventoryByMountingUntil("9999-12-31",excludeId,candidate),missing=new Set();
+  for(const mt of Object.values(stock)){
+    for(const m of Object.values(mt.models))if((m.cabedal||0)<0)missing.add("cabedal");
+    for(const line of Object.values(mt.lines)){if((line.palmilha||0)<0)missing.add("palmilha");if((line.solado||0)<0)missing.add("solado")}
+  }
+  return COMPONENTS.filter(c=>missing.has(c.id));
 }
 function workdayStats(key,readOnly=false){
   const days=data.settings.workDays,today=spDate(),end=weekEnd(key);
@@ -294,9 +334,13 @@ function workdayStats(key,readOnly=false){
 }
 function weekSummary(key){
   const w=weekData(key),t=totalsFor(key),goal=Number(w.goal)||0,stock=inventoryUntil(weekEnd(key)),stockByMounting=inventoryByMountingUntil(weekEnd(key));
-  const componentTotals=Object.fromEntries(COMPONENTS.map(c=>[c.id,Object.values(stock).reduce((sum,m)=>sum+Math.max(0,m[c.id]||0),0)]));
+  const componentTotals={
+    cabedal:Object.values(stockByMounting).reduce((sum,mt)=>sum+Object.values(mt.models).reduce((a,m)=>a+Math.max(0,m.cabedal||0),0),0),
+    palmilha:Object.values(stockByMounting).reduce((sum,mt)=>sum+Object.values(mt.lines).reduce((a,line)=>a+Math.max(0,line.palmilha||0),0),0),
+    solado:Object.values(stockByMounting).reduce((sum,mt)=>sum+Object.values(mt.lines).reduce((a,line)=>a+Math.max(0,line.solado||0),0),0)
+  };
   const gargalo=COMPONENTS.reduce((a,b)=>componentTotals[b.id]<componentTotals[a.id]?b:a,COMPONENTS[0]);
-  const possible=Object.values(stockByMounting).reduce((total,mt)=>total+Object.values(mt).reduce((sum,m)=>sum+Math.max(0,Math.min(...COMPONENTS.map(c=>m[c.id]||0))),0),0);
+  const possible=Object.values(stockByMounting).reduce((total,mt)=>total+possibleForMounting(mt),0);
   const work=workdayStats(key,key<currentWeekKey());
   const avg=work.elapsed?t.done/work.elapsed:0;
   const projection=Math.round(t.done+avg*work.remaining);
@@ -333,8 +377,8 @@ function goalModal(){
 }
 function onboarding(){
   const key=currentWeekKey();
-  showModal(`<h2 id="modal-title">Comece pela meta</h2><p>Este app controla componentes e pares prontos por montagem e modelo.</p>
-    <ul><li>Defina a meta semanal.</li><li>Escolha a montagem e lance cabedais, palmilhas e solados.</li><li>Ao lançar a produção pronta, os componentes dessa montagem são baixados automaticamente.</li></ul>
+  showModal(`<h2 id="modal-title">Comece pela meta</h2><p>Este app controla cabedais por modelo e palmilhas e solados por linha.</p>
+    <ul><li>Defina a meta semanal.</li><li>Escolha a montagem e lance cabedais por modelo ou palmilhas e solados por linha.</li><li>Ao lançar a produção pronta, o cabedal do modelo e os componentes da linha são baixados automaticamente.</li></ul>
     <div class="field"><label for="first-goal">Meta desta semana em pares</label><input id="first-goal" inputmode="numeric" pattern="[0-9]*" placeholder="Digite a meta"></div>
     <button class="btn primary full" id="start-app">Começar</button>`);
   document.getElementById("start-app").onclick=()=>{
@@ -347,12 +391,11 @@ function renderWeek(key=ui.viewWeek||currentWeekKey()){
   const readOnly=key!==currentWeekKey(),w=weekData(key),s=weekSummary(key),models=modelsForWeek(key),mountings=mountingsForWeek(key);
   const goal=s.goal,remaining=Math.max(0,goal-s.done),perDay=s.work.remaining?remaining/s.work.remaining:0,maxComponent=Math.max(1,...Object.values(s.componentTotals));
   const modelRows=models.map(m=>{
-    const value=s.byModel[m.id]||0,mg=Number(w.modelGoals[m.id])||0,stock=s.stock[m.id]||{},possible=Math.max(0,Math.min(...COMPONENTS.map(c=>stock[c.id]||0)));
-    return `<div class="row"><div class="row-top"><span class="name">Modelo ${esc(m.name)}</span><span class="value">${fmt(value)} prontos</span></div><div class="votes">${fichasText(value)}${mg?` · meta ${fmt(mg)} · ${pct(100*value/mg)}`:""}</div>${mg?`<div class="bar secondary"><span style="width:${barWidth(value,mg)}%"></span></div>`:""}<div class="calc">Cabedal ${fmt(stock.cabedal)} · Palmilhas ${fmt(stock.palmilha)} · Solado ${fmt(stock.solado)} · pode produzir ${fmt(possible)} pares</div></div>`;
+    const value=s.byModel[m.id]||0,mg=Number(w.modelGoals[m.id])||0,stock=s.stock[m.id]||{},line=stock.line||modelLine(m.id,m.name),possible=Math.max(0,Math.min(stock.cabedal||0,stock.palmilha||0,stock.solado||0));
+    return `<div class="row"><div class="row-top"><span class="name">Modelo ${esc(m.name)}</span><span class="value">${fmt(value)} prontos</span></div><div class="votes">${fichasText(value)}${mg?` · meta ${fmt(mg)} · ${pct(100*value/mg)}`:""}</div>${mg?`<div class="bar secondary"><span style="width:${barWidth(value,mg)}%"></span></div>`:""}<div class="calc">Cabedal ${fmt(stock.cabedal)} · Linha ${esc(line)}: palmilhas ${fmt(stock.palmilha)} e solados ${fmt(stock.solado)} · pode produzir até ${fmt(possible)} pares deste modelo</div></div>`;
   }).join("");
   const mountingRows=mountings.map(mt=>{
-    const value=s.byMounting[mt.id]||0,amount=value*(Number(mt.rate)||0),stock=s.stockByMounting[mt.id]||{};
-    const possible=Object.values(stock).reduce((sum,m)=>sum+Math.max(0,Math.min(...COMPONENTS.map(c=>m[c.id]||0))),0);
+    const value=s.byMounting[mt.id]||0,amount=value*(Number(mt.rate)||0),stock=s.stockByMounting[mt.id]||{models:{},lines:{}},possible=possibleForMounting(stock);
     return `<div class="row"><div class="row-top"><span class="name">${esc(mt.name)}</span><span class="value">${fmt(value)} prontos</span></div><div class="votes">${money(mt.rate)} por par · valor a pagar ${money(amount)}</div><div class="calc">Componentes disponíveis permitem produzir ${fmt(possible)} pares nesta montagem.</div></div>`;
   }).join("");
   document.getElementById("tab-week").innerHTML=`
@@ -361,7 +404,7 @@ function renderWeek(key=ui.viewWeek||currentWeekKey()){
       ${goal?`<div class="meter"><div class="meter-top"><div class="meter-num">${fmt(s.done)}<small> / ${fmt(goal)}</small></div><div class="meter-cap">pares prontos<br>${pct(s.rate)}</div></div><div class="meter-track"><div class="meter-fill" style="width:${barWidth(s.done,goal)}%"></div></div></div>`:`<div class="notice">Defina a meta desta semana para calcular percentuais, ritmo e projeção.</div>`}
       <div class="summary-grid"><div class="summary-stat"><strong>${fmt(s.possible)} pares</strong><span>possível produzir agora</span></div><div class="summary-stat"><strong>${fmt(s.projection)} pares</strong><span>projeção semanal</span></div></div>
     </div>
-    <div class="block"><h2>Componentes disponíveis</h2><p class="sub">Saldo após descontar automaticamente os pares prontos.</p>
+    <div class="block"><h2>Componentes disponíveis</h2><p class="sub">Cabedais por modelo; palmilhas e solados compartilhados por linha.</p>
       ${COMPONENTS.map(c=>{const value=s.componentTotals[c.id]||0,isGap=s.gargalo?.id===c.id;return `<div class="row ${isGap?"gargalo":""}"><div class="row-top"><span class="name">${esc(c.name)}${isGap?'<span class="tag">Gargalo</span>':""}</span><span class="value">${fmt(value)} pares</span></div><div class="bar${isGap?"":" secondary"}"><span style="width:${100*value/maxComponent}%"></span></div></div>`}).join("")}
     </div>
     <div class="block"><h2>Ritmo da semana</h2>
@@ -370,7 +413,7 @@ function renderWeek(key=ui.viewWeek||currentWeekKey()){
       ${goal?(s.work.remaining?`<div class="row"><div class="row-top"><span class="name">Quanto falta por dia</span><span class="value">${fmt(perDay)} pares/dia</span></div><div class="calc">${fmt(remaining)} ÷ ${s.work.remaining} ${s.work.remaining===1?"dia":"dias"} = ${fmt(perDay)} pares/dia</div></div>`:`<div class="row"><div class="row-top"><span class="name">Quanto faltou</span><span class="value">${fmt(remaining)} pares</span></div><div class="calc">Não restam dias de trabalho nesta semana.</div></div>`):""}
     </div>
     <div class="block"><h2>Produção por montagem</h2><p class="sub">Pares prontos e valor a pagar nesta semana.</p>${mountingRows||'<div class="empty">Cadastre ao menos uma montagem em Ajustes.</div>'}</div>
-    <div class="block"><h2>Produção por modelo</h2><p class="sub">Pares prontos na semana e componentes disponíveis.</p>${modelRows||'<div class="empty">Cadastre ao menos um modelo em Ajustes.</div>'}</div>`;
+    <div class="block"><h2>Produção por modelo</h2><p class="sub">Cabedal individual; palmilha e solado usados da linha do modelo.</p>${modelRows||'<div class="empty">Cadastre ao menos um modelo em Ajustes.</div>'}</div>`;
   if(readOnly)document.getElementById("back-current").onclick=()=>{ui.viewWeek=null;render();window.scrollTo({top:0,behavior:"smooth"})};
   document.getElementById("edit-goal").hidden=readOnly;
 }
@@ -381,23 +424,31 @@ function entriesForDate(date){
 function renderEntry(){
   const date=document.getElementById("entry-date")?.value||spDate(),models=activeModels(),mountings=activeMountings(),entries=entriesForDate(date);
   document.getElementById("tab-entry").innerHTML=`
-    <form class="block" id="entry-form"><h2>${ui.editingEntry?"Editar lançamento":"Novo lançamento"}</h2><p class="sub">Lance componentes recebidos ou produção pronta.</p>
+    <form class="block" id="entry-form"><h2>${ui.editingEntry?"Editar lançamento":"Novo lançamento"}</h2><p class="sub">Cabedal é individual por modelo. Palmilha e solado são compartilhados por linha.</p>
       <div class="field"><label for="entry-date">Data</label><input id="entry-date" type="date" value="${date}"></div>
       <div class="field"><label for="entry-mounting">Montagem</label><select id="entry-mounting">${mountings.map(m=>`<option value="${m.id}">${esc(m.name)}</option>`).join("")}</select></div>
-      <div class="form-grid"><div class="field"><label for="entry-kind">O que está entrando</label><select id="entry-kind">${COMPONENTS.map(c=>`<option value="${c.id}">${esc(c.name)}</option>`).join("")}<option value="finished">Produto pronto</option></select></div><div class="field"><label for="entry-model">Modelo</label><select id="entry-model">${models.map(m=>`<option value="${m.id}">${esc(m.name)}</option>`).join("")}</select></div></div>
+      <div class="form-grid"><div class="field"><label for="entry-kind">O que está entrando</label><select id="entry-kind">${COMPONENTS.map(c=>`<option value="${c.id}">${esc(c.name)}</option>`).join("")}<option value="finished">Produto pronto</option></select></div><div class="field"><label for="entry-model" id="entry-target-label">Modelo</label><select id="entry-model"></select></div></div>
       <div class="form-grid"><div class="field"><label for="entry-unit">Unidade</label><select id="entry-unit"><option value="pairs">Pares</option><option value="kits">Kits de ${fmt(data.settings.pairsPerKit)} pares</option></select></div><div class="field"><label for="entry-qty">Quantidade</label><input id="entry-qty" inputmode="numeric" pattern="[0-9]*" placeholder="0" autocomplete="off"></div></div>
       <div class="quick"><button type="button" data-quick="kit">+1 kit</button><button type="button" data-quick="sheet">+1 ficha (${fmt(data.settings.pairsPerSheet)})</button></div>
       <div class="button-row">${ui.editingEntry?'<button type="button" class="btn" id="cancel-edit">Cancelar</button>':""}<button class="btn primary" type="submit">${ui.editingEntry?"Salvar alteração":"Adicionar lançamento"}</button></div>
     </form>
     <div class="block"><h2>Lançamentos do dia</h2><p class="sub">${fmtDate(date)} · ${entries.reduce((a,e)=>a+Number(e.qty||0),0).toLocaleString("pt-BR")} pares movimentados</p>
-      ${entries.length?entries.map(e=>`<div class="row"><div class="row-top"><div class="entry-main"><div class="entry-title">${esc(e.mountingName||itemName(data.settings.mountings,e.mountingId,"Montagem"))} · Modelo ${esc(e.modelName||itemName(data.settings.models,e.modelId))}</div><div class="entry-meta">${esc(e.kind==="finished"?"Produto pronto":COMPONENTS.find(c=>c.id===e.kind)?.name||"Componente")} · ${e.inputUnit==="kits"?`${fmt(e.inputQty)} kits · `:""}${fmt(e.qty)} pares${e.kind==="finished"?" · baixa automática":""}</div></div><div class="entry-actions"><button class="icon-btn" data-edit="${e.id}" data-week="${e.weekKey}">Editar</button><button class="icon-btn danger" data-delete="${e.id}" data-week="${e.weekKey}">Apagar</button></div></div></div>`).join(""):'<div class="empty">Nenhum lançamento nesta data.</div>'}
+      ${entries.length?entries.map(e=>{const shared=e.kind==="palmilha"||e.kind==="solado",target=shared?`Linha ${entryLine(e)}`:`Modelo ${e.modelName||itemName(data.settings.models,e.modelId)}`;return `<div class="row"><div class="row-top"><div class="entry-main"><div class="entry-title">${esc(e.mountingName||itemName(data.settings.mountings,e.mountingId,"Montagem"))} · ${esc(target)}</div><div class="entry-meta">${esc(e.kind==="finished"?"Produto pronto":COMPONENTS.find(c=>c.id===e.kind)?.name||"Componente")} · ${e.inputUnit==="kits"?`${fmt(e.inputQty)} kits · `:""}${fmt(e.qty)} pares${e.kind==="finished"?" · baixa automática":""}</div></div><div class="entry-actions"><button class="icon-btn" data-edit="${e.id}" data-week="${e.weekKey}">Editar</button><button class="icon-btn danger" data-delete="${e.id}" data-week="${e.weekKey}">Apagar</button></div></div></div>`}).join(""):'<div class="empty">Nenhum lançamento nesta data.</div>'}
     </div>`;
-  const form=document.getElementById("entry-form");
+  const form=document.getElementById("entry-form"),kindSelect=document.getElementById("entry-kind"),targetSelect=document.getElementById("entry-model");
+  const updateTarget=(selected)=>{
+    const shared=kindSelect.value==="palmilha"||kindSelect.value==="solado";
+    document.getElementById("entry-target-label").textContent=shared?"Linha":"Modelo";
+    targetSelect.innerHTML=shared?availableLines().map(line=>`<option value="line:${esc(line)}">Linha ${esc(line)}</option>`).join(""):models.map(m=>`<option value="${m.id}">${esc(m.name)}</option>`).join("");
+    if(selected&&[...targetSelect.options].some(o=>o.value===selected))targetSelect.value=selected;
+  };
+  updateTarget();
   if(!models.length||!mountings.length){form.querySelector("button[type=submit]").disabled=true;showToast(!models.length?"Cadastre um modelo em Ajustes.":"Cadastre uma montagem em Ajustes.")}
   if(ui.editingEntry){
     const {weekKey,id}=ui.editingEntry,e=data.weeks[weekKey]?.entries.find(x=>x.id===id);
-    if(e){document.getElementById("entry-date").value=e.date;document.getElementById("entry-mounting").value=e.mountingId;document.getElementById("entry-kind").value=e.kind;document.getElementById("entry-model").value=e.modelId;document.getElementById("entry-unit").value=e.inputUnit||"pairs";document.getElementById("entry-qty").value=e.inputQty||e.qty}
+    if(e){document.getElementById("entry-date").value=e.date;document.getElementById("entry-mounting").value=e.mountingId;kindSelect.value=e.kind;updateTarget(e.kind==="palmilha"||e.kind==="solado"?`line:${entryLine(e)}`:e.modelId);document.getElementById("entry-unit").value=e.inputUnit||"pairs";document.getElementById("entry-qty").value=e.inputQty||e.qty}
   }
+  kindSelect.onchange=()=>updateTarget();
   form.onsubmit=saveEntry;
   document.getElementById("entry-date").onchange=e=>{ui.editingEntry=null;const keep=e.target.value;renderEntry();document.getElementById("entry-date").value=keep};
   form.querySelectorAll("[data-quick]").forEach(b=>b.onclick=()=>{const q=document.getElementById("entry-qty"),unit=document.getElementById("entry-unit").value;let add=b.dataset.quick==="kit"?(unit==="kits"?1:data.settings.pairsPerKit):(unit==="kits"?data.settings.pairsPerSheet/data.settings.pairsPerKit:data.settings.pairsPerSheet);q.value=(Number(q.value)||0)+add;q.focus()});
@@ -409,21 +460,23 @@ function saveEntry(e){
   e.preventDefault();const date=document.getElementById("entry-date").value,raw=document.getElementById("entry-qty").value.trim();
   if(!date){showToast("Escolha a data.");return}
   if(!/^\d+$/.test(raw)||Number(raw)<=0){showToast("Use um número inteiro maior que zero, sem vírgula.");return}
-  const kind=document.getElementById("entry-kind").value,mountingId=document.getElementById("entry-mounting").value,modelId=document.getElementById("entry-model").value,inputUnit=document.getElementById("entry-unit").value,inputQty=Number(raw),qty=inputUnit==="kits"?inputQty*data.settings.pairsPerKit:inputQty;
-  const candidate={kind,mountingId,modelId,qty},balance=stockAfterChange(mountingId,modelId,ui.editingEntry?.id,candidate),missing=COMPONENTS.filter(c=>(balance[c.id]||0)<0);
+  const kind=document.getElementById("entry-kind").value,mountingId=document.getElementById("entry-mounting").value,target=document.getElementById("entry-model").value,inputUnit=document.getElementById("entry-unit").value,inputQty=Number(raw),qty=inputUnit==="kits"?inputQty*data.settings.pairsPerKit:inputQty,shared=kind==="palmilha"||kind==="solado";
+  const line=shared?target.replace("line:",""):modelLine(target),modelId=shared?"":target,modelName=shared?`Linha ${line}`:itemName(data.settings.models,modelId);
+  const candidate={kind,mountingId,modelId,modelName,line,qty,date},missing=stockProblems(ui.editingEntry?.id,candidate);
   if(missing.length){showToast(`Saldo insuficiente de ${missing.map(c=>c.name.toLowerCase()).join(", ")} para esse lançamento.`);return}
   if(ui.editingEntry){
     const oldWeek=data.weeks[ui.editingEntry.weekKey],idx=oldWeek?.entries.findIndex(x=>x.id===ui.editingEntry.id)??-1;
     if(idx<0){showToast("Lançamento não encontrado.");return}
-    const item=oldWeek.entries[idx];oldWeek.entries.splice(idx,1);const newWeek=ensureWeek(weekKeyFor(date));newWeek.entries.push({...item,date,kind,mountingId,modelId,qty,inputUnit,inputQty,mountingName:itemName(data.settings.mountings,mountingId),modelName:itemName(data.settings.models,modelId),updatedAt:new Date().toISOString()});ui.editingEntry=null;
-  }else ensureWeek(weekKeyFor(date)).entries.push({id:uid("e"),date,kind,mountingId,modelId,qty,inputUnit,inputQty,mountingName:itemName(data.settings.mountings,mountingId),modelName:itemName(data.settings.models,modelId),createdAt:new Date().toISOString()});
+    const item=oldWeek.entries[idx];oldWeek.entries.splice(idx,1);const newWeek=ensureWeek(weekKeyFor(date));newWeek.entries.push({...item,...candidate,inputUnit,inputQty,mountingName:itemName(data.settings.mountings,mountingId),updatedAt:new Date().toISOString()});ui.editingEntry=null;
+  }else ensureWeek(weekKeyFor(date)).entries.push({id:uid("e"),...candidate,inputUnit,inputQty,mountingName:itemName(data.settings.mountings,mountingId),createdAt:new Date().toISOString()});
   save();render();showToast("Lançamento salvo.");
 }
 function deleteEntry(weekKey,id){
   const e=data.weeks[weekKey]?.entries.find(x=>x.id===id);if(!e)return;
-  const balance=stockAfterChange(e.mountingId,e.modelId,id,null),missing=COMPONENTS.filter(c=>(balance[c.id]||0)<0);
+  const missing=stockProblems(id,null);
   if(missing.length){showToast(`Não é possível apagar: faltaria ${missing.map(c=>c.name.toLowerCase()).join(", ")}.`);return}
-  confirmAction({title:"Apagar lançamento?",message:`${e.qty} pares do modelo ${e.modelName||itemName(data.settings.models,e.modelId)}, da montagem ${e.mountingName||itemName(data.settings.mountings,e.mountingId)}, serão removidos.`,confirmText:"Apagar",danger:true,onConfirm:()=>{data.weeks[weekKey].entries=data.weeks[weekKey].entries.filter(x=>x.id!==id);save();render();showToast("Lançamento apagado.")}});
+  const target=e.kind==="palmilha"||e.kind==="solado"?`linha ${entryLine(e)}`:`modelo ${e.modelName||itemName(data.settings.models,e.modelId)}`;
+  confirmAction({title:"Apagar lançamento?",message:`${e.qty} pares da ${target}, montagem ${e.mountingName||itemName(data.settings.mountings,e.mountingId)}, serão removidos.`,confirmText:"Apagar",danger:true,onConfirm:()=>{data.weeks[weekKey].entries=data.weeks[weekKey].entries.filter(x=>x.id!==id);save();render();showToast("Lançamento apagado.")}});
 }
 function renderHistory(){
   const current=currentWeekKey(),keys=Object.keys(data.weeks).filter(k=>k<current&&(Number(data.weeks[k].goal)>0||(data.weeks[k].entries||[]).length)).sort().reverse();
@@ -446,7 +499,7 @@ function renderSettings(){
   const models=activeModels(),mountings=activeMountings(),bs=backupStatus(),days=[{n:1,l:"Seg"},{n:2,l:"Ter"},{n:3,l:"Qua"},{n:4,l:"Qui"},{n:5,l:"Sex"},{n:6,l:"Sáb"},{n:0,l:"Dom"}];
   document.getElementById("tab-settings").innerHTML=`
     <div class="block"><h2>Padrões da fábrica</h2><p class="sub">Esses valores alimentam os botões rápidos e a conversão em fichas.</p><div class="form-grid"><div class="field"><label for="pairs-sheet">Pares por ficha</label><input id="pairs-sheet" inputmode="numeric" value="${data.settings.pairsPerSheet}"></div><div class="field"><label for="pairs-kit">Pares por kit</label><input id="pairs-kit" inputmode="numeric" value="${data.settings.pairsPerKit}"></div></div><button class="btn primary full" id="save-patterns">Salvar padrões</button></div>
-    <div class="block"><h2>Componentes controlados</h2><p class="sub">Cada par pronto baixa automaticamente um cabedal, uma palmilha e um solado da mesma montagem e do mesmo modelo.</p><div class="summary-grid">${COMPONENTS.map(c=>`<div class="summary-stat"><strong>${esc(c.name)}</strong><span>controle em pares</span></div>`).join("")}</div></div>
+    <div class="block"><h2>Componentes controlados</h2><p class="sub">Cada par pronto baixa um cabedal do modelo e uma palmilha e um solado da linha correspondente, sempre na mesma montagem.</p><div class="summary-grid">${COMPONENTS.map(c=>`<div class="summary-stat"><strong>${esc(c.name)}</strong><span>controle em pares</span></div>`).join("")}</div></div>
     <div class="block"><h2>Montagens</h2><p class="sub">Defina as equipes e o valor pago por par pronto. Os valores das semanas anteriores ficam preservados.</p><div class="settings-list">${mountings.map((x,i)=>mountingSettingsItem(x,i,mountings.length)).join("")}</div><button class="btn full" id="add-mounting">Adicionar montagem</button></div>
     <div class="block"><h2>Modelos</h2><div class="settings-list">${models.map((x,i)=>settingsItem(x,"models",i,models.length)).join("")}</div><button class="btn full" data-add-item="models">Adicionar modelo</button></div>
     <div class="block"><h2>Dias de trabalho</h2><p class="sub">A semana sempre começa na segunda-feira.</p><div class="days">${days.map(d=>`<label class="day-check"><input type="checkbox" value="${d.n}" ${data.settings.workDays.includes(d.n)?"checked":""}><span>${d.l}</span></label>`).join("")}</div><button class="btn primary full" id="save-days">Salvar dias</button></div>
