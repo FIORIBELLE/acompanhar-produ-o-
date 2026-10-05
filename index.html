@@ -256,7 +256,8 @@ function availableLines(){return [...new Set(["300","500","600",...activeModels(
 function possibleForMounting(mt){
   return Object.entries(mt.lines||{}).reduce((total,[line,parts])=>{
     const cabedais=Object.entries(mt.models||{}).reduce((sum,[id,m])=>sum+(modelLine(id,m.name)===line?Math.max(0,m.cabedal||0):0),0);
-    return total+Math.max(0,Math.min(cabedais,parts.palmilha||0,parts.solado||0));
+    const possible=line==="300"?Math.min(cabedais,parts.solado||0):Math.min(cabedais,parts.palmilha||0,parts.solado||0);
+    return total+Math.max(0,possible);
   },0);
 }
 function previousGoal(key){
@@ -300,7 +301,7 @@ function inventoryByMountingUntil(date,excludeId=null,candidate=null){
     const qty=Number(e.qty)||0,mt=ensureMounting(e.mountingId),line=entryLine(e);
     if(e.kind==="finished"){
       ensureModel(mt,e.modelId,e.modelName).cabedal-=qty;
-      const shared=ensureLine(mt,line);shared.palmilha-=qty;shared.solado-=qty;
+      const shared=ensureLine(mt,line);shared.solado-=qty;if(line!=="300")shared.palmilha-=qty;
     }else if(e.kind==="cabedal")ensureModel(mt,e.modelId,e.modelName).cabedal+=qty;
     else if(e.kind==="palmilha"||e.kind==="solado")ensureLine(mt,line)[e.kind]+=qty;
   };
@@ -328,7 +329,15 @@ function inventoryUntil(date){
 function stockAfterChange(mountingId,modelId,excludeId,candidate){
   const stock=inventoryByMountingUntil("9999-12-31",excludeId,candidate),mt=stock[mountingId]||{models:{},lines:{}};
   const line=candidate?.line||modelLine(modelId,candidate?.modelName),model=mt.models[modelId]||{},shared=mt.lines[line]||{};
-  return{cabedal:model.cabedal||0,palmilha:shared.palmilha||0,solado:shared.solado||0};
+  return{cabedal:model.cabedal||0,palmilha:shared.palmilha||0,solado:shared.solado||0,line};
+}
+function candidateStockProblems(excludeId,candidate){
+  if(!candidate||candidate.kind!=="finished")return[];
+  const s=stockAfterChange(candidate.mountingId,candidate.modelId,excludeId,candidate),missing=[];
+  if(s.cabedal<0)missing.push(COMPONENTS.find(c=>c.id==="cabedal"));
+  if(s.solado<0)missing.push(COMPONENTS.find(c=>c.id==="solado"));
+  if(s.line!=="300"&&s.palmilha<0)missing.push(COMPONENTS.find(c=>c.id==="palmilha"));
+  return missing.filter(Boolean);
 }
 function stockProblems(excludeId,candidate){
   const stock=inventoryByMountingUntil("9999-12-31",excludeId,candidate),missing=new Set();
@@ -408,7 +417,7 @@ function renderWeek(key=ui.viewWeek||currentWeekKey()){
   const readOnly=key!==currentWeekKey(),w=weekData(key),s=weekSummary(key),models=modelsForWeek(key),mountings=mountingsForWeek(key);
   const goal=s.goal,remaining=Math.max(0,goal-s.done),perDay=s.work.remaining?remaining/s.work.remaining:0,maxComponent=Math.max(1,...Object.values(s.componentTotals));
   const modelRows=models.map(m=>{
-    const value=s.byModel[m.id]||0,mg=Number(w.modelGoals[m.id])||0,stock=s.stock[m.id]||{},line=stock.line||modelLine(m.id,m.name),possible=Math.max(0,Math.min(stock.cabedal||0,stock.palmilha||0,stock.solado||0));
+    const value=s.byModel[m.id]||0,mg=Number(w.modelGoals[m.id])||0,stock=s.stock[m.id]||{},line=stock.line||modelLine(m.id,m.name),possible=Math.max(0,line==="300"?Math.min(stock.cabedal||0,stock.solado||0):Math.min(stock.cabedal||0,stock.palmilha||0,stock.solado||0));
     return `<div class="row"><div class="row-top"><span class="name">Modelo ${esc(m.name)}</span><span class="value">${fmt(value)} prontos</span></div><div class="votes">${fichasText(value)}${mg?` · meta ${fmt(mg)} · ${pct(100*value/mg)}`:""}</div>${mg?`<div class="bar secondary"><span style="width:${barWidth(value,mg)}%"></span></div>`:""}<div class="calc">Cabedal ${fmt(stock.cabedal)} · Linha ${esc(line)}: palmilhas ${fmt(stock.palmilha)} e solados ${fmt(stock.solado)} · pode produzir até ${fmt(possible)} pares deste modelo</div></div>`;
   }).join("");
   const mountingRows=mountings.map(mt=>{
@@ -485,8 +494,8 @@ function saveEntry(e){
   const kind=document.getElementById("entry-kind").value,mountingId=document.getElementById("entry-mounting").value,target=document.getElementById("entry-model").value,inputUnit=document.getElementById("entry-unit").value,inputQty=Number(raw),qty=inputUnit==="kits"?inputQty*data.settings.pairsPerKit:inputQty,shared=kind==="palmilha"||kind==="solado",color=document.getElementById("entry-color").value.trim();
   if(!color){showToast("Informe a cor para controlar o estoque.");return}
   const legacyLine=shared&&String(target).startsWith("line:"),modelId=legacyLine?"":target,line=legacyLine?target.replace("line:",""):modelLine(modelId),modelName=legacyLine?`Linha ${line}`:itemName(data.settings.models,modelId);
-  const candidate={kind,mountingId,modelId,modelName,line,qty,date,color},missing=stockProblems(ui.editingEntry?.id,candidate);
-  if(missing.length){showToast(`Saldo insuficiente de ${missing.map(c=>c.name.toLowerCase()).join(", ")} para esse lançamento.`);return}
+  const candidate={kind,mountingId,modelId,modelName,line,qty,date,color},missing=candidateStockProblems(ui.editingEntry?.id,candidate);
+  if(missing.length){showToast(`Saldo insuficiente de ${missing.map(c=>c.name.toLowerCase()).join(", ")} para montar esse produto.`);return}
   if(ui.editingEntry){
     const oldWeek=data.weeks[ui.editingEntry.weekKey],idx=oldWeek?.entries.findIndex(x=>x.id===ui.editingEntry.id)??-1;
     if(idx<0){showToast("Lançamento não encontrado.");return}
