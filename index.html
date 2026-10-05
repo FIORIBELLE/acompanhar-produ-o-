@@ -593,10 +593,56 @@ function removeItem(type,id){
   const item=data.settings[type].find(x=>x.id===id);
   confirmAction({title:`Remover ${type==="mountings"?"montagem":"modelo"}?`,message:`${item.name} deixará de aparecer nos novos lançamentos. Os registros antigos serão preservados.`,confirmText:"Remover",danger:true,onConfirm:()=>{item.active=false;syncCurrentSnapshots();save();render();showToast("Item removido.")}});
 }
+function modelFormHtml(item={}){
+  const inferredLine=item.line||modelLine(item.id,item.name)||"500";
+  const cab=item.cabedalCost==null?"":Number(item.cabedalCost).toLocaleString("pt-BR",{minimumFractionDigits:2,maximumFractionDigits:2});
+  const total=item.totalCost==null?"":Number(item.totalCost).toLocaleString("pt-BR",{minimumFractionDigits:2,maximumFractionDigits:2});
+  return '<div class="form-grid"><div class="field"><label for="model-ref">Referência</label><input id="model-ref" value="'+esc(item.ref||"")+'" placeholder="Ex.: 514"></div><div class="field"><label for="model-line">Linha</label><input id="model-line" inputmode="numeric" value="'+esc(inferredLine==="Outros"?"":inferredLine)+'" placeholder="Ex.: 500"></div></div>'
+    +'<div class="field"><label for="model-name">Nome do modelo</label><input id="model-name" value="'+esc(item.name||"")+'" placeholder="Ex.: Flat Nó Duplo"></div>'
+    +'<div class="form-grid"><div class="field"><label for="model-cabedal-cost">Custo do cabedal / par</label><input id="model-cabedal-cost" inputmode="decimal" value="'+esc(cab)+'" placeholder="Ex.: 8,35"></div><div class="field"><label for="model-total-cost">Custo total / par</label><input id="model-total-cost" inputmode="decimal" value="'+esc(total)+'" placeholder="Ex.: 22,35"></div></div>'
+    +'<label class="day-check" style="width:auto;justify-content:flex-start;gap:10px"><input id="model-uses-insole" type="checkbox" '+(item.usesPalmilha!==false?"checked":"")+'><span>Usa palmilha</span></label>'
+    +'<div class="notice" style="margin-top:12px">Palmilha e solado são compartilhados. O sistema usa o custo padrão da linha escolhida.</div>';
+}
+function readModelForm(){
+  const ref=document.getElementById("model-ref").value.trim().toUpperCase();
+  const name=document.getElementById("model-name").value.trim();
+  const line=document.getElementById("model-line").value.trim();
+  const cabedalCost=parseMoney(document.getElementById("model-cabedal-cost").value);
+  const totalCost=parseMoney(document.getElementById("model-total-cost").value);
+  const usesPalmilha=document.getElementById("model-uses-insole").checked;
+  if(!/^\d{3}R?$/.test(ref)){showToast("Use uma referência com 3 números, por exemplo 514.");return null}
+  if(!name){showToast("Digite o nome do modelo.");return null}
+  if(!/^\d{3}$/.test(line)){showToast("Informe a linha com 3 números, por exemplo 500.");return null}
+  if(!Number.isFinite(cabedalCost)||cabedalCost<0){showToast("Informe o custo do cabedal.");return null}
+  if(!Number.isFinite(totalCost)||totalCost<=0){showToast("Informe o custo total do par.");return null}
+  return{ref,name,line,cabedalCost:Math.round(cabedalCost*100)/100,totalCost:Math.round(totalCost*100)/100,usesPalmilha};
+}
+function editModel(id){
+  const item=data.settings.models.find(x=>x.id===id);if(!item)return;
+  showModal('<h2 id="modal-title">Ficha do modelo</h2>'+modelFormHtml(item)+'<div class="button-row"><button class="btn" data-modal-close>Cancelar</button><button class="btn primary" id="save-model-sheet">Salvar ficha</button></div>');
+  document.getElementById("model-line").oninput=e=>{if(e.target.value==="300")document.getElementById("model-uses-insole").checked=false};
+  document.getElementById("save-model-sheet").onclick=()=>{
+    const values=readModelForm();if(!values)return;
+    const duplicate=data.settings.models.find(x=>x.id!==id&&x.active!==false&&String(x.ref||"").toUpperCase()===values.ref);
+    if(duplicate){showToast("Essa referência já está cadastrada.");return}
+    Object.assign(item,values);syncCurrentSnapshots();save();closeModal();render();showToast("Ficha do modelo atualizada.");
+  };
+}
 function addItem(type){
-  const label=type==="stages"?"etapa":"modelo";
-  showModal(`<h2 id="modal-title">Adicionar ${label}</h2><div class="field"><label for="new-item">Nome</label><input id="new-item" autocomplete="off"></div><div class="button-row"><button class="btn" data-modal-close>Cancelar</button><button class="btn primary" id="confirm-add">Adicionar</button></div>`);
-  document.getElementById("confirm-add").onclick=()=>{const name=document.getElementById("new-item").value.trim();if(!name){showToast("Digite um nome.");return}data.settings[type].push({id:uid(type==="stages"?"s":"m"),name,active:true});syncCurrentSnapshots();save();closeModal();render();showToast("Item adicionado.")};
+  if(type==="models"){
+    showModal('<h2 id="modal-title">Adicionar modelo</h2>'+modelFormHtml({usesPalmilha:true,line:"500"})+'<div class="button-row"><button class="btn" data-modal-close>Cancelar</button><button class="btn primary" id="confirm-add">Adicionar modelo</button></div>');
+    document.getElementById("model-line").oninput=e=>{if(e.target.value==="300")document.getElementById("model-uses-insole").checked=false};
+    document.getElementById("confirm-add").onclick=()=>{
+      const values=readModelForm();if(!values)return;
+      const duplicate=data.settings.models.find(x=>x.active!==false&&String(x.ref||"").toUpperCase()===values.ref);
+      if(duplicate){showToast("Essa referência já está cadastrada.");return}
+      data.settings.models.push({id:uid("m"),...values,active:true});syncCurrentSnapshots();save();closeModal();render();showToast("Modelo e ficha de custo adicionados.");
+    };
+    return;
+  }
+  const label=type==="stages"?"etapa":"item";
+  showModal('<h2 id="modal-title">Adicionar '+label+'</h2><div class="field"><label for="new-item">Nome</label><input id="new-item" autocomplete="off"></div><div class="button-row"><button class="btn" data-modal-close>Cancelar</button><button class="btn primary" id="confirm-add">Adicionar</button></div>');
+  document.getElementById("confirm-add").onclick=()=>{const name=document.getElementById("new-item").value.trim();if(!name){showToast("Digite um nome.");return}data.settings[type].push({id:uid("i"),name,active:true});syncCurrentSnapshots();save();closeModal();render();showToast("Item adicionado.")};
 }
 function addMounting(){
   showModal(`<h2 id="modal-title">Adicionar montagem</h2><div class="field"><label for="new-mounting">Nome</label><input id="new-mounting" autocomplete="off" placeholder="Nome da equipe"></div><div class="field"><label for="new-rate">Valor por par</label><input id="new-rate" inputmode="decimal" placeholder="Ex.: 3,50"></div><div class="button-row"><button class="btn" data-modal-close>Cancelar</button><button class="btn primary" id="confirm-mounting">Adicionar</button></div>`);
