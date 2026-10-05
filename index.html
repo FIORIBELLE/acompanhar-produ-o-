@@ -34,8 +34,9 @@ header{display:flex;justify-content:space-between;align-items:baseline;gap:12px;
 h1{font-size:1.6rem;font-weight:800;font-stretch:80%;margin:0;letter-spacing:-.01em}
 .status{font-size:.82rem;color:var(--soft);text-align:right;max-width:48%}
 .dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--live);margin-right:6px;vertical-align:middle}
-nav{display:flex;gap:4px;background:var(--card);border:1px solid var(--line);border-radius:10px;padding:4px;margin-bottom:16px;position:sticky;top:env(safe-area-inset-top,0px);z-index:8}
-nav button{flex:1;min-width:0;border:0;background:transparent;color:var(--soft);font-weight:600;padding:11px 3px;border-radius:7px;cursor:pointer}
+/* NAV_SCROLL_V1 */
+nav{display:flex;gap:4px;overflow-x:auto;-webkit-overflow-scrolling:touch;background:var(--card);border:1px solid var(--line);border-radius:10px;padding:4px;margin-bottom:16px;position:sticky;top:env(safe-area-inset-top,0px);z-index:8}
+nav button{flex:1;min-width:72px;border:0;background:transparent;color:var(--soft);font-weight:600;padding:11px 3px;border-radius:7px;cursor:pointer}
 nav button[aria-selected="true"]{background:var(--ink);color:var(--bg)}
 button:focus-visible,input:focus-visible,select:focus-visible,.week-card:focus-visible{outline:3px solid var(--live);outline-offset:2px}
 .block{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px;margin-bottom:14px}
@@ -128,6 +129,7 @@ footer{color:var(--soft);font-size:.78rem;text-align:center;padding:8px 0 24px}
   <nav role="tablist" aria-label="Navegação principal">
     <button role="tab" aria-selected="true" data-tab="week">Semana</button>
     <button role="tab" aria-selected="false" data-tab="stock">Estoque</button>
+    <button role="tab" aria-selected="false" data-tab="expenses">Gastos</button>
     <button role="tab" aria-selected="false" data-tab="entry">Lançar</button>
     <button role="tab" aria-selected="false" data-tab="history">Histórico</button>
     <button role="tab" aria-selected="false" data-tab="settings">Ajustes</button>
@@ -136,6 +138,7 @@ footer{color:var(--soft);font-size:.78rem;text-align:center;padding:8px 0 24px}
   <main>
     <section id="tab-week"></section>
     <section id="tab-stock" hidden></section>
+    <section id="tab-expenses" hidden></section>
     <section id="tab-entry" hidden></section>
     <section id="tab-history" hidden></section>
     <section id="tab-settings" hidden></section>
@@ -1094,6 +1097,128 @@ if("serviceWorker" in navigator)navigator.serviceWorker.register("sw.js").catch(
     render();
   };
 })([{"ref":"313","model":"Florzinha Dupla","line":"300 Papete","cabedal":10.64,"solado":11,"palmilha":0,"total":26.24,"complete":true,"usesPalmilha":false,"alert":""},{"ref":"313R","model":"Florzinha Dupla — Revenda","line":"300 Papete","cabedal":10.64,"solado":11,"palmilha":0,"total":27.24,"complete":true,"usesPalmilha":false,"alert":""},{"ref":"314","model":"Dedinho Flor","line":"300 Papete","cabedal":8.02,"solado":11,"palmilha":0,"total":23.62,"complete":true,"usesPalmilha":false,"alert":""},{"ref":"314R","model":"Dedinho Flor — Revenda","line":"300 Papete","cabedal":8.02,"solado":11,"palmilha":0,"total":24.62,"complete":true,"usesPalmilha":false,"alert":""},{"ref":"315","model":"Chinelo Flor Grande","line":"300 Papete","cabedal":10.4,"solado":11,"palmilha":0,"total":26,"complete":true,"usesPalmilha":false,"alert":""},{"ref":"315R","model":"Chinelo Flor Grande — Revenda","line":"300 Papete","cabedal":10.4,"solado":11,"palmilha":0,"total":27,"complete":true,"usesPalmilha":false,"alert":""},{"ref":"316","model":"Palitinho Bolinha","line":"300 Papete","cabedal":10.74,"solado":11,"palmilha":0,"total":26.34,"complete":true,"usesPalmilha":false,"alert":""},{"ref":"316R","model":"Palitinho Bolinha — Revenda","line":"300 Papete","cabedal":10.74,"solado":11,"palmilha":0,"total":27.34,"complete":true,"usesPalmilha":false,"alert":""},{"ref":"317","model":"Cabedal Bolinha Fivela","line":"300 Papete","cabedal":13.2,"solado":11,"palmilha":0,"total":28.8,"complete":true,"usesPalmilha":false,"alert":""},{"ref":"317R","model":"Cabedal Bolinha Fivela — Revenda","line":"300 Papete","cabedal":13.2,"solado":11,"palmilha":0,"total":29.8,"complete":true,"usesPalmilha":false,"alert":""},{"ref":"318","model":"Cabedal Fivela Frente","line":"300 Papete","cabedal":11.69,"solado":11,"palmilha":0,"total":27.29,"complete":true,"usesPalmilha":false,"alert":""},{"ref":"318R","model":"Cabedal Fivela Frente — Revenda","line":"300 Papete","cabedal":11.69,"solado":11,"palmilha":0,"total":28.29,"complete":true,"usesPalmilha":false,"alert":""},{"ref":"319","model":"X Dedinho Strass","line":"300 Papete","cabedal":9.74,"solado":11,"palmilha":0,"total":25.34,"complete":true,"usesPalmilha":false,"alert":""},{"ref":"319R","model":"X Dedinho Strass — Revenda","line":"300 Papete","cabedal":9.74,"solado":11,"palmilha":0,"total":26.34,"complete":true,"usesPalmilha":false,"alert":""},{"ref":"501","model":"Flat H","line":"500 Flat","cabedal":9.1,"solado":6.1,"palmilha":3.4,"total":23.1,"complete":true,"usesPalmilha":true,"alert":""},{"ref":"501R","model":"Flat H — Revenda","line":"500 Flat","cabedal":9.1,"solado":6.1,"palmilha":3.4,"total":24.1,"complete":true,"usesPalmilha":true,"alert":""},{"ref":"502","model":"Flat Dedinho","line":"500 Flat","cabedal":6.9,"solado":6.1,"palmilha":3.4,"total":20.9,"complete":true,"usesPalmilha":true,"alert":""},{"ref":"502R","model":"Flat Dedinho — Revenda","line":"500 Flat","cabedal":6.9,"solado":6.1,"palmilha":3.4,"total":21.9,"complete":true,"usesPalmilha":true,"alert":""},{"ref":"503","model":"Flat Palitinho Bolinha","line":"500 Flat","cabedal":10.62,"solado":6.1,"palmilha":3.4,"total":24.62,"complete":true,"usesPalmilha":true,"alert":""},{"ref":"503R","model":"Flat Palitinho Bolinha — Revenda","line":"500 Flat","cabedal":10.62,"solado":6.1,"palmilha":3.4,"total":25.62,"complete":true,"usesPalmilha":true,"alert":""},{"ref":"506","model":"X Flat Quadrada","line":"500 Flat","cabedal":8.33,"solado":6.1,"palmilha":3.4,"total":22.33,"complete":true,"usesPalmilha":true,"alert":""},{"ref":"506R","model":"X Flat Quadrada — Revenda","line":"500 Flat","cabedal":8.33,"solado":6.1,"palmilha":3.4,"total":23.33,"complete":true,"usesPalmilha":true,"alert":""},{"ref":"507","model":"Dedinho","line":"500 Flat","cabedal":8.35,"solado":6.1,"palmilha":3.4,"total":22.35,"complete":true,"usesPalmilha":true,"alert":""},{"ref":"507R","model":"Dedinho — Revenda","line":"500 Flat","cabedal":8.25,"solado":6.1,"palmilha":3.4,"total":23.25,"complete":true,"usesPalmilha":true,"alert":""},{"ref":"508","model":"Dedinho com Tira Frente","line":"500 Flat","cabedal":7.16,"solado":6.1,"palmilha":3.4,"total":21.16,"complete":true,"usesPalmilha":true,"alert":""},{"ref":"508R","model":"Dedinho com Tira Frente — Revenda","line":"500 Flat","cabedal":7.16,"solado":6.1,"palmilha":3.4,"total":22.16,"complete":true,"usesPalmilha":true,"alert":""},{"ref":"509","model":"Chinelo Nozinho","line":"500 Flat","cabedal":4.89,"solado":6.1,"palmilha":3.4,"total":18.89,"complete":true,"usesPalmilha":true,"alert":""},{"ref":"509R","model":"Chinelo Nozinho — Revenda","line":"500 Flat","cabedal":4.89,"solado":6.1,"palmilha":3.4,"total":19.89,"complete":true,"usesPalmilha":true,"alert":""},{"ref":"510","model":"Cabedal Folha","line":"500 Flat","cabedal":11.3,"solado":6.1,"palmilha":3.5,"total":25.4,"complete":true,"usesPalmilha":true,"alert":""},{"ref":"510R","model":"Cabedal Folha — Revenda","line":"500 Flat","cabedal":11.3,"solado":6.1,"palmilha":3.5,"total":26.4,"complete":true,"usesPalmilha":true,"alert":""},{"ref":"511","model":"Cabedal 2 Fivelas","line":"500 Flat","cabedal":7.8,"solado":5.5,"palmilha":3.5,"total":21.3,"complete":true,"usesPalmilha":true,"alert":""},{"ref":"511R","model":"Cabedal 2 Fivelas — Revenda","line":"500 Flat","cabedal":7.8,"solado":5.5,"palmilha":3.5,"total":22.3,"complete":true,"usesPalmilha":true,"alert":""},{"ref":"512","model":"ST Brilho","line":"500 Flat","cabedal":12.3,"solado":5.5,"palmilha":3.5,"total":25.8,"complete":true,"usesPalmilha":true,"alert":""},{"ref":"512R","model":"ST Brilho — Revenda","line":"500 Flat","cabedal":12.3,"solado":5.5,"palmilha":3.5,"total":26.8,"complete":true,"usesPalmilha":true,"alert":""},{"ref":"513","model":"Nozinho Tiras Cruzadas","line":"500 Flat","cabedal":null,"solado":6.1,"palmilha":3.5,"total":21.28,"complete":false,"usesPalmilha":true,"alert":"Revisar: a composição não informa cola; custo do cabedal não calculado."},{"ref":"513R","model":"Nozinho Tiras Cruzadas — Revenda","line":"500 Flat","cabedal":null,"solado":6.1,"palmilha":3.5,"total":22.28,"complete":false,"usesPalmilha":true,"alert":"Revisar: a composição não informa cola; custo do cabedal não calculado."},{"ref":"601","model":"Flat Chinelo Strass","line":"600","cabedal":13.24,"solado":7.1,"palmilha":4.05,"total":30.89,"complete":true,"usesPalmilha":true,"alert":""},{"ref":"601R","model":"Flat Chinelo Strass — Revenda","line":"600","cabedal":13.24,"solado":7.1,"palmilha":4.05,"total":31.89,"complete":true,"usesPalmilha":true,"alert":""},{"ref":"602","model":"ABS Ouro","line":"600","cabedal":12.47,"solado":7.1,"palmilha":4.05,"total":30.12,"complete":true,"usesPalmilha":true,"alert":""},{"ref":"602R","model":"ABS Ouro — Revenda","line":"600","cabedal":12.47,"solado":7.1,"palmilha":4.05,"total":31.12,"complete":true,"usesPalmilha":true,"alert":""},{"ref":"603","model":"Flat cabedal 8","line":"600","cabedal":21.5,"solado":7.1,"palmilha":4.05,"total":39.15,"complete":true,"usesPalmilha":true,"alert":""},{"ref":"603R","model":"Flat cabedal 8 — Revenda","line":"600","cabedal":21.5,"solado":7.1,"palmilha":4.05,"total":40.15,"complete":true,"usesPalmilha":true,"alert":""},{"ref":"605","model":"Nozinho Tiras Cruzadas","line":"600","cabedal":11.58,"solado":7.1,"palmilha":4.15,"total":29.33,"complete":true,"usesPalmilha":true,"alert":""},{"ref":"605R","model":"Nozinho Tiras Cruzadas — Revenda","line":"600","cabedal":11.58,"solado":7.1,"palmilha":4.15,"total":30.33,"complete":true,"usesPalmilha":true,"alert":""},{"ref":"606","model":"Cabedal H com ABS","line":"600","cabedal":12.4,"solado":7.1,"palmilha":4.15,"total":30.15,"complete":true,"usesPalmilha":true,"alert":""},{"ref":"606R","model":"Cabedal H com ABS — Revenda","line":"600","cabedal":12.4,"solado":7.1,"palmilha":4.15,"total":31.15,"complete":true,"usesPalmilha":true,"alert":""},{"ref":"801","model":"Nozinho 3 Tiras (linha 800)","line":"800","cabedal":11.1,"solado":3.7,"palmilha":3.5,"total":22.3,"complete":true,"usesPalmilha":true,"alert":""},{"ref":"801R","model":"Nozinho 3 Tiras (linha 800) — Revenda","line":"800","cabedal":11.1,"solado":3.7,"palmilha":3.5,"total":23.3,"complete":true,"usesPalmilha":true,"alert":""}],"2026-10-05T16:39:00.000Z");
+</script>
+<!-- FACTORY_EXPENSES_V1 -->
+<script>
+(function factoryExpensesBootstrap(){
+  if(!Array.isArray(data.factoryExpenses))data.factoryExpenses=[];
+  const EXPENSE_CATEGORIES=["Matéria-prima","Mão de obra","Energia/água","Frete","Manutenção","Impostos","Aluguel","Outros"];
+  const PAYMENT_METHODS=["Pix","Boleto","Cartão","Dinheiro","Transferência","Débito automático","Outro"];
+  const expenseMoney=n=>Number(n||0).toLocaleString("pt-BR",{style:"currency",currency:"BRL"});
+  const expenseNumber=v=>{
+    const raw=String(v??"").trim().replace(/\s/g,"");
+    if(!raw)return NaN;
+    return Number(raw.includes(",")?raw.replace(/\./g,"").replace(",","."):raw);
+  };
+  const monthKey=date=>String(date||"").slice(0,7);
+  const currentMonth=()=>spDate().slice(0,7);
+  const monthLabel=m=>{
+    const [y,mo]=m.split("-").map(Number);
+    return new Intl.DateTimeFormat("pt-BR",{month:"long",year:"numeric",timeZone:TZ}).format(new Date(Date.UTC(y,mo-1,2)));
+  };
+  let expenseMonth=currentMonth();
+  let editingExpenseId=null;
+
+  function expensesForMonth(month){
+    return data.factoryExpenses.filter(x=>monthKey(x.date)===month).sort((a,b)=>String(b.date).localeCompare(String(a.date))||String(b.createdAt||"").localeCompare(String(a.createdAt||"")));
+  }
+  function expenseSummary(month){
+    const rows=expensesForMonth(month);
+    const total=rows.reduce((s,x)=>s+Number(x.amount||0),0);
+    const paid=rows.filter(x=>x.status==="paid").reduce((s,x)=>s+Number(x.amount||0),0);
+    const pending=total-paid;
+    const byCategory={};
+    for(const x of rows)byCategory[x.category]=(byCategory[x.category]||0)+Number(x.amount||0);
+    return{rows,total,paid,pending,byCategory};
+  }
+  function expenseFormValues(item={}){
+    return {date:item.date||spDate(),category:item.category||"Matéria-prima",description:item.description||"",supplier:item.supplier||"",amount:item.amount??"",method:item.method||"Pix",status:item.status||"paid",note:item.note||""};
+  }
+
+  function renderExpenses(){
+    const root=document.getElementById("tab-expenses");if(!root)return;
+    const s=expenseSummary(expenseMonth),edit=editingExpenseId?data.factoryExpenses.find(x=>x.id===editingExpenseId):null,v=expenseFormValues(edit||{});
+    const cats=Object.entries(s.byCategory).sort((a,b)=>b[1]-a[1]);
+    root.innerHTML=`
+      <div class="block">
+        <div class="readonly"><div><h2>Gastos da fábrica</h2><p class="sub">Controle mensal de despesas operacionais.</p></div><div class="field" style="margin:0;min-width:150px"><label for="expense-month">Mês</label><input id="expense-month" type="month" value="${esc(expenseMonth)}"></div></div>
+        <div class="summary-grid">
+          <div class="summary-stat"><strong>${expenseMoney(s.total)}</strong><span>Total lançado</span></div>
+          <div class="summary-stat"><strong>${expenseMoney(s.paid)}</strong><span>Pago</span></div>
+          <div class="summary-stat"><strong>${expenseMoney(s.pending)}</strong><span>Pendente</span></div>
+          <div class="summary-stat"><strong>${s.rows.length}</strong><span>Lançamentos</span></div>
+        </div>
+      </div>
+      <form class="block" id="expense-form">
+        <h2>${edit?"Editar gasto":"Novo gasto"}</h2>
+        <div class="form-grid">
+          <div class="field"><label for="expense-date">Data</label><input id="expense-date" type="date" value="${esc(v.date)}"></div>
+          <div class="field"><label for="expense-category">Categoria</label><select id="expense-category">${EXPENSE_CATEGORIES.map(x=>`<option ${x===v.category?"selected":""}>${esc(x)}</option>`).join("")}</select></div>
+        </div>
+        <div class="field"><label for="expense-description">Descrição</label><input id="expense-description" value="${esc(v.description)}" placeholder="Ex.: compra de tiras Israel 06 mm"></div>
+        <div class="form-grid">
+          <div class="field"><label for="expense-supplier">Fornecedor / favorecido</label><input id="expense-supplier" value="${esc(v.supplier)}" placeholder="Ex.: RD Injetados"></div>
+          <div class="field"><label for="expense-amount">Valor</label><input id="expense-amount" inputmode="decimal" value="${v.amount===""?"":Number(v.amount).toLocaleString("pt-BR",{minimumFractionDigits:2,maximumFractionDigits:2})}" placeholder="0,00"></div>
+        </div>
+        <div class="form-grid">
+          <div class="field"><label for="expense-method">Pagamento</label><select id="expense-method">${PAYMENT_METHODS.map(x=>`<option ${x===v.method?"selected":""}>${esc(x)}</option>`).join("")}</select></div>
+          <div class="field"><label for="expense-status">Situação</label><select id="expense-status"><option value="paid" ${v.status==="paid"?"selected":""}>Pago</option><option value="pending" ${v.status==="pending"?"selected":""}>Pendente</option></select></div>
+        </div>
+        <div class="field"><label for="expense-note">Observação</label><input id="expense-note" value="${esc(v.note)}" placeholder="Opcional"></div>
+        <div class="button-row">${edit?'<button class="btn" type="button" id="cancel-expense-edit">Cancelar</button>':""}<button class="btn primary" type="submit">${edit?"Salvar alteração":"Adicionar gasto"}</button></div>
+      </form>
+      <div class="block">
+        <h2>Por categoria · ${esc(monthLabel(expenseMonth))}</h2>
+        ${cats.length?cats.map(([cat,value])=>`<div class="row"><div class="row-top"><span class="name">${esc(cat)}</span><span class="value">${expenseMoney(value)}</span></div><div class="votes">${s.total?((value/s.total)*100).toLocaleString("pt-BR",{maximumFractionDigits:1}):0}% do mês</div></div>`).join(""):'<div class="empty">Nenhum gasto neste mês.</div>'}
+      </div>
+      <div class="block">
+        <h2>Lançamentos</h2><p class="sub">${esc(monthLabel(expenseMonth))}</p>
+        ${s.rows.length?s.rows.map(x=>`<div class="row"><div class="row-top"><div class="entry-main"><div class="entry-title">${esc(x.description)}</div><div class="entry-meta">${fmtDate(x.date)} · ${esc(x.category)}${x.supplier?` · ${esc(x.supplier)}`:""} · ${esc(x.method||"")}</div><div class="entry-meta">${x.status==="paid"?"Pago":"Pendente"}${x.note?` · ${esc(x.note)}`:""}</div></div><div style="text-align:right"><div class="value">${expenseMoney(x.amount)}</div><div class="entry-actions" style="margin-top:5px"><button class="icon-btn" type="button" data-expense-edit="${esc(x.id)}">Editar</button><button class="icon-btn danger" type="button" data-expense-delete="${esc(x.id)}">Apagar</button></div></div></div></div>`).join(""):'<div class="empty">Nenhum gasto lançado.</div>'}
+      </div>
+      <div class="notice"><strong>Backup incluído.</strong> Os gastos da fábrica são salvos no mesmo backup dos demais dados do app.</div>`;
+
+    document.getElementById("expense-month").onchange=e=>{expenseMonth=e.target.value||currentMonth();editingExpenseId=null;renderExpenses()};
+    document.getElementById("expense-form").onsubmit=e=>{
+      e.preventDefault();
+      const date=document.getElementById("expense-date").value;
+      const category=document.getElementById("expense-category").value;
+      const description=document.getElementById("expense-description").value.trim();
+      const supplier=document.getElementById("expense-supplier").value.trim();
+      const amount=expenseNumber(document.getElementById("expense-amount").value);
+      const method=document.getElementById("expense-method").value;
+      const status=document.getElementById("expense-status").value;
+      const note=document.getElementById("expense-note").value.trim();
+      if(!date){showToast("Escolha a data.");return}
+      if(!description){showToast("Digite a descrição do gasto.");return}
+      if(!Number.isFinite(amount)||amount<=0){showToast("Digite um valor válido.");return}
+      const payload={date,category,description,supplier,amount:Math.round(amount*100)/100,method,status,note,updatedAt:new Date().toISOString()};
+      if(editingExpenseId){
+        const item=data.factoryExpenses.find(x=>x.id===editingExpenseId);if(item)Object.assign(item,payload);
+        editingExpenseId=null;showToast("Gasto atualizado.");
+      }else{
+        data.factoryExpenses.push({id:uid("gasto"),...payload,createdAt:new Date().toISOString()});showToast("Gasto adicionado.");
+      }
+      expenseMonth=monthKey(date);save();renderExpenses();
+    };
+    document.getElementById("cancel-expense-edit")?.addEventListener("click",()=>{editingExpenseId=null;renderExpenses()});
+    document.querySelectorAll("[data-expense-edit]").forEach(b=>b.onclick=()=>{editingExpenseId=b.dataset.expenseEdit;const x=data.factoryExpenses.find(y=>y.id===editingExpenseId);if(x)expenseMonth=monthKey(x.date);renderExpenses();window.scrollTo({top:0,behavior:"smooth"})});
+    document.querySelectorAll("[data-expense-delete]").forEach(b=>b.onclick=()=>{
+      const item=data.factoryExpenses.find(x=>x.id===b.dataset.expenseDelete);if(!item)return;
+      confirmAction({title:"Apagar gasto?",message:`${item.description} · ${expenseMoney(item.amount)}`,confirmText:"Apagar",danger:true,onConfirm:()=>{data.factoryExpenses=data.factoryExpenses.filter(x=>x.id!==item.id);save();renderExpenses();showToast("Gasto apagado.")}});
+    });
+  }
+
+  const previousRender=render;
+  render=function(){if(ui.tab==="expenses"){ensureWeek();renderExpenses();return}previousRender()};
+  switchTab=function(tab){
+    ui.tab=tab;
+    document.querySelectorAll("nav [role=tab]").forEach(b=>b.setAttribute("aria-selected",b.dataset.tab===tab));
+    ["week","stock","expenses","entry","history","settings"].forEach(k=>{const el=document.getElementById("tab-"+k);if(el)el.hidden=k!==tab});
+    document.querySelector(".actions").hidden=tab!=="week";
+    render();
+  };
+  document.querySelectorAll('nav [role=tab]').forEach(b=>b.onclick=()=>switchTab(b.dataset.tab));
+})();
 </script>
 </body>
 </html>
