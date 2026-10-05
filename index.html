@@ -203,7 +203,13 @@ function loadData(){
 }
 function normalizeItems(items,fallback){
   if(!Array.isArray(items)||!items.length)return clone(fallback);
-  return items.filter(x=>x&&x.id&&x.name).map(x=>({id:String(x.id),name:String(x.name),active:x.active!==false}));
+  return items.filter(x=>x&&x.id&&x.name).map(x=>({
+    id:String(x.id),name:String(x.name),active:x.active!==false,
+    ref:x.ref?String(x.ref).toUpperCase():"",line:x.line?String(x.line):"",
+    cabedalCost:Number.isFinite(Number(x.cabedalCost))?Number(x.cabedalCost):null,
+    totalCost:Number.isFinite(Number(x.totalCost))?Number(x.totalCost):null,
+    usesPalmilha:x.usesPalmilha!==false
+  }));
 }
 function normalizeMountings(items,fallback){
   if(!Array.isArray(items)||!items.length)return clone(fallback);
@@ -248,7 +254,9 @@ function mountingsForWeek(key){
 }
 function itemName(collection,id,fallback){return collection.find(x=>x.id===id)?.name||fallback||"Item removido"}
 function modelLine(modelId,modelName,models){
-  const list=models||data.settings.models,label=modelName||list.find(x=>x.id===modelId)?.name||modelId||"";
+  const list=models||data.settings.models,item=list.find(x=>x.id===modelId);
+  if(item?.line)return String(item.line);
+  const label=modelName||item?.ref||item?.name||modelId||"";
   const match=String(label).match(/\d/);return match?match[0]+"00":"Outros";
 }
 function entryLine(e){return e.line||modelLine(e.modelId,e.modelName)}
