@@ -1,7 +1,7 @@
 {
-  "name": "Produção Semanal",
+  "name": "Acompanhar Produção",
   "short_name": "Produção",
-  "description": "Acompanhamento semanal da produção de sandálias.",
+  "description": "Controle de componentes e produção pronta da fábrica.",
   "lang": "pt-BR",
   "start_url": "./",
   "scope": "./",
