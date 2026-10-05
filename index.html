@@ -450,7 +450,7 @@ function entriesForDate(date){
 function renderEntry(){
   const date=document.getElementById("entry-date")?.value||spDate(),models=activeModels(),mountings=activeMountings(),entries=entriesForDate(date);
   document.getElementById("tab-entry").innerHTML=`
-    <form class="block" id="entry-form"><h2>${ui.editingEntry?"Editar lançamento":"Novo lançamento"}</h2><p class="sub">Cabedal é individual por referência. Palmilha e solado continuam compartilhados operacionalmente por linha, mas agora guardam a referência e a cor para valorizar o estoque.</p>
+    <form class="block" id="entry-form"><h2>${ui.editingEntry?"Editar lançamento":"Novo lançamento"}</h2><p class="sub">Cabedal é controlado por referência. Palmilha e solado são saldos compartilhados por linha: qualquer modelo da mesma linha pode consumir esses componentes.</p>
       <div class="field"><label for="entry-date">Data</label><input id="entry-date" type="date" value="${date}"></div>
       <div class="field"><label for="entry-mounting">Montagem</label><select id="entry-mounting">${mountings.map(m=>`<option value="${m.id}">${esc(m.name)}</option>`).join("")}</select></div>
       <div class="form-grid"><div class="field"><label for="entry-kind">O que está entrando</label><select id="entry-kind">${COMPONENTS.map(c=>`<option value="${c.id}">${esc(c.name)}</option>`).join("")}<option value="finished">Produto pronto</option></select></div><div class="field"><label for="entry-model" id="entry-target-label">Modelo</label><select id="entry-model"></select></div></div>
@@ -460,16 +460,18 @@ function renderEntry(){
       <div class="button-row">${ui.editingEntry?'<button type="button" class="btn" id="cancel-edit">Cancelar</button>':""}<button class="btn primary" type="submit">${ui.editingEntry?"Salvar alteração":"Adicionar lançamento"}</button></div>
     </form>
     <div class="block"><h2>Lançamentos do dia</h2><p class="sub">${fmtDate(date)} · ${entries.reduce((a,e)=>a+Number(e.qty||0),0).toLocaleString("pt-BR")} pares movimentados</p>
-      ${entries.length?entries.map(e=>{const shared=e.kind==="palmilha"||e.kind==="solado",target=shared?(e.modelId?`Ref. ${e.modelName||itemName(data.settings.models,e.modelId)} · Linha ${entryLine(e)}`:`Linha ${entryLine(e)}`):`Modelo ${e.modelName||itemName(data.settings.models,e.modelId)}`;return `<div class="row"><div class="row-top"><div class="entry-main"><div class="entry-title">${esc(e.mountingName||itemName(data.settings.mountings,e.mountingId,"Montagem"))} · ${esc(target)}</div><div class="entry-meta">${esc(e.kind==="finished"?"Produto pronto":COMPONENTS.find(c=>c.id===e.kind)?.name||"Componente")} · ${esc(e.color||"Sem cor")} · ${e.inputUnit==="kits"?`${fmt(e.inputQty)} kits · `:""}${fmt(e.qty)} pares${e.kind==="finished"?" · baixa automática":""}</div></div><div class="entry-actions"><button class="icon-btn" data-edit="${e.id}" data-week="${e.weekKey}">Editar</button><button class="icon-btn danger" data-delete="${e.id}" data-week="${e.weekKey}">Apagar</button></div></div></div>`}).join(""):'<div class="empty">Nenhum lançamento nesta data.</div>'}
+      ${entries.length?entries.map(e=>{const shared=e.kind==="palmilha"||e.kind==="solado",target=shared?`Linha ${entryLine(e)}`:`Modelo ${e.modelName||itemName(data.settings.models,e.modelId)}`;return `<div class="row"><div class="row-top"><div class="entry-main"><div class="entry-title">${esc(e.mountingName||itemName(data.settings.mountings,e.mountingId,"Montagem"))} · ${esc(target)}</div><div class="entry-meta">${esc(e.kind==="finished"?"Produto pronto":COMPONENTS.find(c=>c.id===e.kind)?.name||"Componente")} · ${esc(e.color||"Sem cor")} · ${e.inputUnit==="kits"?`${fmt(e.inputQty)} kits · `:""}${fmt(e.qty)} pares${e.kind==="finished"?" · baixa automática":""}</div></div><div class="entry-actions"><button class="icon-btn" data-edit="${e.id}" data-week="${e.weekKey}">Editar</button><button class="icon-btn danger" data-delete="${e.id}" data-week="${e.weekKey}">Apagar</button></div></div></div>`}).join(""):'<div class="empty">Nenhum lançamento nesta data.</div>'}
     </div>`;
   const form=document.getElementById("entry-form"),kindSelect=document.getElementById("entry-kind"),targetSelect=document.getElementById("entry-model");
   const updateTarget=(selected)=>{
     const shared=kindSelect.value==="palmilha"||kindSelect.value==="solado";
-    document.getElementById("entry-target-label").textContent=shared?"Referência para estoque":"Modelo";
-    targetSelect.innerHTML=models.map(m=>`<option value="${m.id}">${esc(m.name)}${shared?` · linha ${esc(modelLine(m.id,m.name))}`:""}</option>`).join("");
-    if(shared&&selected&&String(selected).startsWith("line:")&&![...targetSelect.options].some(o=>o.value===selected)){
-      const line=String(selected).replace("line:","");
-      targetSelect.insertAdjacentHTML("beforeend",`<option value="line:${esc(line)}">Linha ${esc(line)} · lançamento antigo sem referência</option>`);
+    document.getElementById("entry-target-label").textContent=shared?"Linha":"Modelo";
+    targetSelect.innerHTML=shared
+      ?availableLines().map(line=>`<option value="line:${esc(line)}">Linha ${esc(line)}</option>`).join("")
+      :models.map(m=>`<option value="${m.id}">${esc(m.name)}</option>`).join("");
+    if(shared&&selected&&!String(selected).startsWith("line:")){
+      const oldModel=models.find(m=>m.id===selected);
+      selected=`line:${modelLine(selected,oldModel?.name)}`;
     }
     if(selected&&[...targetSelect.options].some(o=>o.value===selected))targetSelect.value=selected;
   };
@@ -477,7 +479,7 @@ function renderEntry(){
   if(!models.length||!mountings.length){form.querySelector("button[type=submit]").disabled=true;showToast(!models.length?"Cadastre um modelo em Ajustes.":"Cadastre uma montagem em Ajustes.")}
   if(ui.editingEntry){
     const {weekKey,id}=ui.editingEntry,e=data.weeks[weekKey]?.entries.find(x=>x.id===id);
-    if(e){document.getElementById("entry-date").value=e.date;document.getElementById("entry-mounting").value=e.mountingId;kindSelect.value=e.kind;updateTarget((e.kind==="palmilha"||e.kind==="solado")?(e.modelId||`line:${entryLine(e)}`):e.modelId);document.getElementById("entry-color").value=e.color||"";document.getElementById("entry-unit").value=e.inputUnit||"pairs";document.getElementById("entry-qty").value=e.inputQty||e.qty}
+    if(e){document.getElementById("entry-date").value=e.date;document.getElementById("entry-mounting").value=e.mountingId;kindSelect.value=e.kind;updateTarget((e.kind==="palmilha"||e.kind==="solado")?`line:${entryLine(e)}`:e.modelId);document.getElementById("entry-color").value=e.color||"";document.getElementById("entry-unit").value=e.inputUnit||"pairs";document.getElementById("entry-qty").value=e.inputQty||e.qty}
   }
   kindSelect.onchange=()=>updateTarget();
   form.onsubmit=saveEntry;
@@ -493,7 +495,7 @@ function saveEntry(e){
   if(!/^\d+$/.test(raw)||Number(raw)<=0){showToast("Use um número inteiro maior que zero, sem vírgula.");return}
   const kind=document.getElementById("entry-kind").value,mountingId=document.getElementById("entry-mounting").value,target=document.getElementById("entry-model").value,inputUnit=document.getElementById("entry-unit").value,inputQty=Number(raw),qty=inputUnit==="kits"?inputQty*data.settings.pairsPerKit:inputQty,shared=kind==="palmilha"||kind==="solado",color=document.getElementById("entry-color").value.trim();
   if(!color){showToast("Informe a cor para controlar o estoque.");return}
-  const legacyLine=shared&&String(target).startsWith("line:"),modelId=legacyLine?"":target,line=legacyLine?target.replace("line:",""):modelLine(modelId),modelName=legacyLine?`Linha ${line}`:itemName(data.settings.models,modelId);
+  const line=shared?String(target).replace("line:",""):modelLine(target),modelId=shared?"":target,modelName=shared?`Linha ${line}`:itemName(data.settings.models,modelId);
   const candidate={kind,mountingId,modelId,modelName,line,qty,date,color},missing=candidateStockProblems(ui.editingEntry?.id,candidate);
   if(missing.length){showToast(`Saldo insuficiente de ${missing.map(c=>c.name.toLowerCase()).join(", ")} para montar esse produto.`);return}
   if(ui.editingEntry){
@@ -751,7 +753,7 @@ if("serviceWorker" in navigator)navigator.serviceWorker.register("sw.js").catch(
       if(e.kind==="cabedal"){
         addBalance(map,"cabedal",ref||"@sem-ref",color,qty);
       }else if(e.kind==="palmilha"||e.kind==="solado"){
-        addBalance(map,e.kind,ref||linePoolRef(line),color,qty);
+        addBalance(map,e.kind,linePoolRef(line),color,qty);
       }else if(e.kind==="finished"){
         const sheet=CATALOG[ref];
         consumeBalance(map,{sector:"cabedal",ref,line,color,qty,allowLineFallback:false},issues);
@@ -773,7 +775,13 @@ if("serviceWorker" in navigator)navigator.serviceWorker.register("sw.js").catch(
   function balances(excludeId=null){return balanceState(excludeId).rows}
 
   function costInfo(sector,ref){
-    if(String(ref).startsWith("@line:"))return{ok:false,message:`Saldo antigo lançado apenas pela ${displayRef(ref)}. Falta a referência para aplicar o custo correto.`};
+    if(String(ref).startsWith("@line:")){
+      const line=String(ref).slice(6),key=sectorById(sector)?.costKey;
+      if(sector!=="palmilha"&&sector!=="solado")return{ok:false,message:`${displayRef(ref)} sem referência para aplicar o custo.`};
+      const values=[...new Set(refs.filter(x=>String(x.line||"").match(/\d{3}/)?.[0]===line).map(x=>x[key]).filter(v=>v!==null&&v!==undefined&&v!==""&&Number.isFinite(Number(v))).map(Number))];
+      if(values.length===1)return{ok:true,cost:values[0],sheet:{ref:displayRef(ref),model:`Componente compartilhado da Linha ${line}`}};
+      return{ok:false,message:`${displayRef(ref)} é compartilhada entre modelos, mas há custos diferentes nas fichas técnicas. Revise o custo padrão da linha para valorizar este saldo.`};
+    }
     if(String(ref).startsWith("@"))return{ok:false,message:"Lançamento sem referência identificável. Informe a referência para valorizar este saldo."};
     const sheet=CATALOG[String(ref)];
     const sectorInfo=sectorById(sector);
