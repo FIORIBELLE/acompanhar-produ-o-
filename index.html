@@ -153,7 +153,8 @@ const DEFAULTS={
     ],
     mountings:[
       {id:"bruno_barbara",name:"Bruno e Bárbara",rate:2.60,active:true},
-      {id:"jeferson",name:"Jeferson",rate:4.00,active:true}
+      {id:"jeferson",name:"Jeferson",rate:4.00,active:true},
+      {id:"legacy",name:"Não informado",rate:0,active:false}
     ],
     workDays:[1,2,3,4,5]
   },
@@ -172,7 +173,8 @@ function loadData(){
     merged.settings.models=normalizeItems(merged.settings.models,DEFAULTS.settings.models);
     merged.settings.mountings=normalizeMountings(merged.settings.mountings,DEFAULTS.settings.mountings);
     merged.settings.workDays=Array.isArray(merged.settings.workDays)?merged.settings.workDays.filter(n=>Number.isInteger(n)&&n>=0&&n<=6):[1,2,3,4,5];
-    const defaultMounting=merged.settings.mountings.find(x=>x.active!==false)?.id||merged.settings.mountings[0].id;
+    if(!merged.settings.mountings.some(x=>x.id==="legacy"))merged.settings.mountings.push({id:"legacy",name:"Não informado",rate:0,active:false});
+    const defaultMounting="legacy";
     for(const w of Object.values(merged.weeks))for(const e of w.entries||[]){
       if(!e.mountingId)e.mountingId=defaultMounting;
       if(!e.mountingName)e.mountingName=merged.settings.mountings.find(x=>x.id===e.mountingId)?.name||"Montagem";
