@@ -669,21 +669,93 @@ if("serviceWorker" in navigator)navigator.serviceWorker.register("sw.js").catch(
   };
   const movementDelta=m=>(m.direction==="out"?-1:1)*(Number(m.qty)||0);
   const itemKey=(sector,ref,color)=>[sector,String(ref),normalizeColor(color).toLocaleLowerCase("pt-BR")].join("|");
+  const linePoolRef=line=>`@line:${String(line||"Outros")}`;
+  const displayRef=ref=>String(ref||"").startsWith("@line:")?`Linha ${String(ref).slice(6)}`:String(ref||"")||"Sem referência";
 
-  function balances(excludeId=null){
-    const map=new Map();
+  function refFromEntry(e){
+    if(!e)return"";
+    const candidates=[e.stockRef,e.modelName,e.modelId?itemName(data.settings.models,e.modelId,""):""];
+    for(const value of candidates){
+      const m=String(value||"").toUpperCase().match(/\b\d{3}R?\b/);
+      if(m&&CATALOG[m[0]])return m[0];
+    }
+    return"";
+  }
+  function ensureBalanceRow(map,sector,ref,color){
+    const normalizedColor=normalizeColor(color)||"Sem cor";
+    const key=itemKey(sector,ref,normalizedColor);
+    if(!map.has(key))map.set(key,{sector,ref:String(ref),color:normalizedColor,qty:0});
+    return map.get(key);
+  }
+  function addBalance(map,sector,ref,color,qty){
+    const row=ensureBalanceRow(map,sector,ref,color);
+    row.qty+=(Number(qty)||0);
+    return row;
+  }
+  function consumeBalance(map,{sector,ref,line,color,qty,allowLineFallback=false},issues){
+    let remaining=Number(qty)||0;
+    if(remaining<=0)return;
+    const wantedColor=normalizeColor(color)||"Sem cor";
+    const exactRef=String(ref||"");
+    const lineRef=linePoolRef(line);
+    const candidateRows=()=>[...map.values()].filter(r=>r.sector===sector&&r.qty>0.00001);
+    const takeWhere=predicate=>{
+      for(const row of candidateRows().filter(predicate)){
+        if(remaining<=0)break;
+        const take=Math.min(row.qty,remaining);
+        row.qty-=take;remaining-=take;
+      }
+    };
+    if(exactRef){
+      takeWhere(r=>r.ref===exactRef&&r.color===wantedColor);
+      takeWhere(r=>r.ref===exactRef&&r.color==="Sem cor");
+      takeWhere(r=>r.ref===exactRef);
+    }
+    if(allowLineFallback){
+      takeWhere(r=>r.ref===lineRef&&r.color===wantedColor);
+      takeWhere(r=>r.ref===lineRef&&r.color==="Sem cor");
+      takeWhere(r=>r.ref===lineRef);
+    }
+    if(remaining>0.00001)issues.push(`${sectorById(sector)?.name||sector}: faltaram ${stockFmt(remaining)} pares para baixar na Ref. ${displayRef(exactRef||lineRef)}.`);
+  }
+  function productionBalanceState(){
+    const map=new Map(),issues=[];
+    const events=[];
+    for(const w of Object.values(data.weeks||{}))for(const e of w.entries||[])events.push(e);
+    events.sort((a,b)=>String(a.date||"").localeCompare(String(b.date||""))||String(a.createdAt||"").localeCompare(String(b.createdAt||"")));
+    for(const e of events){
+      const qty=Number(e.qty)||0;
+      if(qty<=0)continue;
+      const color=normalizeColor(e.color)||"Sem cor";
+      const ref=refFromEntry(e);
+      const line=entryLine(e);
+      if(e.kind==="cabedal"){
+        addBalance(map,"cabedal",ref||"@sem-ref",color,qty);
+      }else if(e.kind==="palmilha"||e.kind==="solado"){
+        addBalance(map,e.kind,ref||linePoolRef(line),color,qty);
+      }else if(e.kind==="finished"){
+        const sheet=CATALOG[ref];
+        consumeBalance(map,{sector:"cabedal",ref,line,color,qty,allowLineFallback:false},issues);
+        consumeBalance(map,{sector:"solado",ref,line,color,qty,allowLineFallback:true},issues);
+        if(sheet?.usesPalmilha!==false)consumeBalance(map,{sector:"palmilha",ref,line,color,qty,allowLineFallback:true},issues);
+        addBalance(map,"produto_pronto",ref||"@sem-ref",color,qty);
+      }
+    }
+    return{map,issues};
+  }
+  function balanceState(excludeId=null){
+    const state=productionBalanceState(),map=state.map;
     for(const m of data.stockLedger){
       if(!m||m.id===excludeId)continue;
-      const color=normalizeColor(m.color)||"Sem cor";
-      const key=itemKey(m.sector,m.ref,color);
-      const current=map.get(key)||{sector:m.sector,ref:String(m.ref),color,qty:0};
-      current.qty+=movementDelta(m);
-      map.set(key,current);
+      addBalance(map,m.sector,m.ref,normalizeColor(m.color)||"Sem cor",movementDelta(m));
     }
-    return [...map.values()];
+    return{rows:[...map.values()],issues:state.issues};
   }
+  function balances(excludeId=null){return balanceState(excludeId).rows}
 
   function costInfo(sector,ref){
+    if(String(ref).startsWith("@line:"))return{ok:false,message:`Saldo antigo lançado apenas pela ${displayRef(ref)}. Falta a referência para aplicar o custo correto.`};
+    if(String(ref).startsWith("@"))return{ok:false,message:"Lançamento sem referência identificável. Informe a referência para valorizar este saldo."};
     const sheet=CATALOG[String(ref)];
     const sectorInfo=sectorById(sector);
     if(!sheet)return{ok:false,message:"Referência sem ficha de custo cadastrada."};
@@ -705,7 +777,7 @@ if("serviceWorker" in navigator)navigator.serviceWorker.register("sw.js").catch(
   }
 
   function summary(){
-    const positive=balances().filter(x=>x.qty>0.00001);
+    const state=balanceState(),positive=state.rows.filter(x=>x.qty>0.00001);
     const bySector={};
     let totalKnown=0,totalPending=0;
     for(const s of STOCK_SECTORS)bySector[s.id]={pairs:0,value:0,pendingPairs:0,items:[]};
@@ -717,7 +789,7 @@ if("serviceWorker" in navigator)navigator.serviceWorker.register("sw.js").catch(
       if(ci.ok){box.value+=item.value;totalKnown+=item.value}else{box.pendingPairs+=row.qty;totalPending+=row.qty}
       box.items.push(item);
     }
-    return{bySector,totalKnown,totalPending,positive};
+    return{bySector,totalKnown,totalPending,positive,issues:state.issues};
   }
 
   function renderStock(){
@@ -743,8 +815,8 @@ if("serviceWorker" in navigator)navigator.serviceWorker.register("sw.js").catch(
           const ci=item.costInfo;
           const sheet=CATALOG[item.ref];
           return `<div class="row">
-            <div class="row-top"><span class="name">Ref. ${esc(item.ref)} · ${esc(item.color)}</span><span class="value">${stockFmt(item.qty)} pares</span></div>
-            <div class="votes">${esc(sheet?.model||"Modelo não informado")} · ${quantityText(item.qty)}</div>
+            <div class="row-top"><span class="name">${String(item.ref).startsWith("@")?esc(displayRef(item.ref)):`Ref. ${esc(item.ref)}`} · ${esc(item.color)}</span><span class="value">${stockFmt(item.qty)} pares</span></div>
+            <div class="votes">${esc(sheet?.model||(String(item.ref).startsWith("@line:")?"Saldo legado por linha":"Modelo não informado"))} · ${quantityText(item.qty)}</div>
             ${ci.ok
               ?`<div class="calc">${stockFmt(item.qty)} pares × ${stockMoney(ci.cost)} = <strong>${stockMoney(item.value)}</strong></div>`
               :`<div class="stock-warning">⚠ ${esc(ci.message)}</div>`}
@@ -760,13 +832,16 @@ if("serviceWorker" in navigator)navigator.serviceWorker.register("sw.js").catch(
         <div class="stock-total-value">${stockMoney(s.totalKnown)}</div>
         <div class="stock-muted">Soma dos valores calculáveis dos 4 setores.</div>
         ${s.totalPending?`<div class="stock-warning">⚠ Existem ${stockFmt(s.totalPending)} pares com custo pendente. O total acima é parcial e não usa R$ 0 para completar a conta.</div>`:""}
+        ${s.issues.length?`<div class="stock-warning">⚠ Divergência de baixa automática: ${esc(s.issues[0])}${s.issues.length>1?` · mais ${s.issues.length-1} ocorrência(s)`:""}</div>`:""}
       </div>
+
+      <div class="notice"><strong>Sincronizado com Produção.</strong> Cabedal, palmilha e solado lançados para a montagem entram automaticamente no estoque. Ao lançar Produto pronto, os componentes são baixados e os pares passam para Produto pronto.</div>
 
       <div class="stock-grid">${sectorCards}</div>
 
       <form class="block" id="stock-form">
-        <h2>Lançar estoque</h2>
-        <p class="sub">Use Entrada para saldo inicial ou recebimentos. Use Saída para consumo, expedição ou correção.</p>
+        <h2>Ajuste manual de estoque</h2>
+        <p class="sub">Use somente para saldo inicial, correções ou saídas que não vêm da produção, como expedição de produto pronto. Não repita aqui cabedal, palmilha ou solado já lançados na aba Lançar.</p>
         <div class="form-grid">
           <div class="field"><label for="stock-date">Data</label><input id="stock-date" type="date" value="${spDate()}"></div>
           <div class="field"><label for="stock-direction">Movimento</label><select id="stock-direction"><option value="in">Entrada</option><option value="out">Saída</option></select></div>
@@ -785,11 +860,11 @@ if("serviceWorker" in navigator)navigator.serviceWorker.register("sw.js").catch(
         <button class="btn primary full" id="stock-save" type="submit">Salvar movimento</button>
       </form>
 
-      ${!hasAny?`<div class="notice">O painel começa com saldo zerado. Lance uma vez o saldo físico atual de cada setor como <strong>Entrada</strong>. Os lançamentos antigos da aba Produção não foram convertidos automaticamente porque palmilhas e solados históricos estavam registrados por linha, sem referência e cor.</div>`:""}
+      ${!hasAny?`<div class="notice">Ainda não há saldo. Assim que você lançar componentes ou Produto pronto na aba <strong>Lançar</strong>, o estoque será alimentado automaticamente.</div>`:""}
 
       ${details}
 
-      <div class="block"><h2>Movimentos recentes</h2><p class="sub">Últimos 30 lançamentos do estoque.</p>
+      <div class="block"><h2>Ajustes manuais recentes</h2><p class="sub">Últimos 30 ajustes feitos diretamente no estoque. Os movimentos da produção entram automaticamente e não precisam ser repetidos aqui.</p>
         ${history.length?history.map(m=>`<div class="row"><div class="row-top"><div><span class="name">${m.direction==="out"?"Saída":"Entrada"} · ${esc(sectorById(m.sector)?.name||m.sector)}</span><div class="votes">${fmtDate(m.date)} · Ref. ${esc(m.ref)} · ${esc(normalizeColor(m.color)||"Sem cor")} · ${stockFmt(m.qty)} pares${m.note?` · ${esc(m.note)}`:""}</div></div><button class="icon-btn danger" type="button" data-stock-delete="${esc(m.id)}">Apagar</button></div></div>`).join(""):'<div class="empty">Nenhum movimento lançado.</div>'}
       </div>
 
