@@ -441,29 +441,34 @@ function entriesForDate(date){
 function renderEntry(){
   const date=document.getElementById("entry-date")?.value||spDate(),models=activeModels(),mountings=activeMountings(),entries=entriesForDate(date);
   document.getElementById("tab-entry").innerHTML=`
-    <form class="block" id="entry-form"><h2>${ui.editingEntry?"Editar lançamento":"Novo lançamento"}</h2><p class="sub">Cabedal é individual por modelo. Palmilha e solado são compartilhados por linha.</p>
+    <form class="block" id="entry-form"><h2>${ui.editingEntry?"Editar lançamento":"Novo lançamento"}</h2><p class="sub">Cabedal é individual por referência. Palmilha e solado continuam compartilhados operacionalmente por linha, mas agora guardam a referência e a cor para valorizar o estoque.</p>
       <div class="field"><label for="entry-date">Data</label><input id="entry-date" type="date" value="${date}"></div>
       <div class="field"><label for="entry-mounting">Montagem</label><select id="entry-mounting">${mountings.map(m=>`<option value="${m.id}">${esc(m.name)}</option>`).join("")}</select></div>
       <div class="form-grid"><div class="field"><label for="entry-kind">O que está entrando</label><select id="entry-kind">${COMPONENTS.map(c=>`<option value="${c.id}">${esc(c.name)}</option>`).join("")}<option value="finished">Produto pronto</option></select></div><div class="field"><label for="entry-model" id="entry-target-label">Modelo</label><select id="entry-model"></select></div></div>
+      <div class="field"><label for="entry-color">Cor</label><input id="entry-color" list="entry-colors" placeholder="Ex.: Preto" autocomplete="off"><datalist id="entry-colors"><option value="Preto"><option value="Caramelo"><option value="Ouro Light"><option value="Rose"><option value="Off White"></datalist></div>
       <div class="form-grid"><div class="field"><label for="entry-unit">Unidade</label><select id="entry-unit"><option value="pairs">Pares</option><option value="kits">Kits de ${fmt(data.settings.pairsPerKit)} pares</option></select></div><div class="field"><label for="entry-qty">Quantidade</label><input id="entry-qty" inputmode="numeric" pattern="[0-9]*" placeholder="0" autocomplete="off"></div></div>
       <div class="quick"><button type="button" data-quick="kit">+1 kit</button><button type="button" data-quick="sheet">+1 ficha (${fmt(data.settings.pairsPerSheet)})</button></div>
       <div class="button-row">${ui.editingEntry?'<button type="button" class="btn" id="cancel-edit">Cancelar</button>':""}<button class="btn primary" type="submit">${ui.editingEntry?"Salvar alteração":"Adicionar lançamento"}</button></div>
     </form>
     <div class="block"><h2>Lançamentos do dia</h2><p class="sub">${fmtDate(date)} · ${entries.reduce((a,e)=>a+Number(e.qty||0),0).toLocaleString("pt-BR")} pares movimentados</p>
-      ${entries.length?entries.map(e=>{const shared=e.kind==="palmilha"||e.kind==="solado",target=shared?`Linha ${entryLine(e)}`:`Modelo ${e.modelName||itemName(data.settings.models,e.modelId)}`;return `<div class="row"><div class="row-top"><div class="entry-main"><div class="entry-title">${esc(e.mountingName||itemName(data.settings.mountings,e.mountingId,"Montagem"))} · ${esc(target)}</div><div class="entry-meta">${esc(e.kind==="finished"?"Produto pronto":COMPONENTS.find(c=>c.id===e.kind)?.name||"Componente")} · ${e.inputUnit==="kits"?`${fmt(e.inputQty)} kits · `:""}${fmt(e.qty)} pares${e.kind==="finished"?" · baixa automática":""}</div></div><div class="entry-actions"><button class="icon-btn" data-edit="${e.id}" data-week="${e.weekKey}">Editar</button><button class="icon-btn danger" data-delete="${e.id}" data-week="${e.weekKey}">Apagar</button></div></div></div>`}).join(""):'<div class="empty">Nenhum lançamento nesta data.</div>'}
+      ${entries.length?entries.map(e=>{const shared=e.kind==="palmilha"||e.kind==="solado",target=shared?(e.modelId?`Ref. ${e.modelName||itemName(data.settings.models,e.modelId)} · Linha ${entryLine(e)}`:`Linha ${entryLine(e)}`):`Modelo ${e.modelName||itemName(data.settings.models,e.modelId)}`;return `<div class="row"><div class="row-top"><div class="entry-main"><div class="entry-title">${esc(e.mountingName||itemName(data.settings.mountings,e.mountingId,"Montagem"))} · ${esc(target)}</div><div class="entry-meta">${esc(e.kind==="finished"?"Produto pronto":COMPONENTS.find(c=>c.id===e.kind)?.name||"Componente")} · ${esc(e.color||"Sem cor")} · ${e.inputUnit==="kits"?`${fmt(e.inputQty)} kits · `:""}${fmt(e.qty)} pares${e.kind==="finished"?" · baixa automática":""}</div></div><div class="entry-actions"><button class="icon-btn" data-edit="${e.id}" data-week="${e.weekKey}">Editar</button><button class="icon-btn danger" data-delete="${e.id}" data-week="${e.weekKey}">Apagar</button></div></div></div>`}).join(""):'<div class="empty">Nenhum lançamento nesta data.</div>'}
     </div>`;
   const form=document.getElementById("entry-form"),kindSelect=document.getElementById("entry-kind"),targetSelect=document.getElementById("entry-model");
   const updateTarget=(selected)=>{
     const shared=kindSelect.value==="palmilha"||kindSelect.value==="solado";
-    document.getElementById("entry-target-label").textContent=shared?"Linha":"Modelo";
-    targetSelect.innerHTML=shared?availableLines().map(line=>`<option value="line:${esc(line)}">Linha ${esc(line)}</option>`).join(""):models.map(m=>`<option value="${m.id}">${esc(m.name)}</option>`).join("");
+    document.getElementById("entry-target-label").textContent=shared?"Referência para estoque":"Modelo";
+    targetSelect.innerHTML=models.map(m=>`<option value="${m.id}">${esc(m.name)}${shared?` · linha ${esc(modelLine(m.id,m.name))}`:""}</option>`).join("");
+    if(shared&&selected&&String(selected).startsWith("line:")&&![...targetSelect.options].some(o=>o.value===selected)){
+      const line=String(selected).replace("line:","");
+      targetSelect.insertAdjacentHTML("beforeend",`<option value="line:${esc(line)}">Linha ${esc(line)} · lançamento antigo sem referência</option>`);
+    }
     if(selected&&[...targetSelect.options].some(o=>o.value===selected))targetSelect.value=selected;
   };
   updateTarget();
   if(!models.length||!mountings.length){form.querySelector("button[type=submit]").disabled=true;showToast(!models.length?"Cadastre um modelo em Ajustes.":"Cadastre uma montagem em Ajustes.")}
   if(ui.editingEntry){
     const {weekKey,id}=ui.editingEntry,e=data.weeks[weekKey]?.entries.find(x=>x.id===id);
-    if(e){document.getElementById("entry-date").value=e.date;document.getElementById("entry-mounting").value=e.mountingId;kindSelect.value=e.kind;updateTarget(e.kind==="palmilha"||e.kind==="solado"?`line:${entryLine(e)}`:e.modelId);document.getElementById("entry-unit").value=e.inputUnit||"pairs";document.getElementById("entry-qty").value=e.inputQty||e.qty}
+    if(e){document.getElementById("entry-date").value=e.date;document.getElementById("entry-mounting").value=e.mountingId;kindSelect.value=e.kind;updateTarget((e.kind==="palmilha"||e.kind==="solado")?(e.modelId||`line:${entryLine(e)}`):e.modelId);document.getElementById("entry-color").value=e.color||"";document.getElementById("entry-unit").value=e.inputUnit||"pairs";document.getElementById("entry-qty").value=e.inputQty||e.qty}
   }
   kindSelect.onchange=()=>updateTarget();
   form.onsubmit=saveEntry;
@@ -477,9 +482,10 @@ function saveEntry(e){
   e.preventDefault();const date=document.getElementById("entry-date").value,raw=document.getElementById("entry-qty").value.trim();
   if(!date){showToast("Escolha a data.");return}
   if(!/^\d+$/.test(raw)||Number(raw)<=0){showToast("Use um número inteiro maior que zero, sem vírgula.");return}
-  const kind=document.getElementById("entry-kind").value,mountingId=document.getElementById("entry-mounting").value,target=document.getElementById("entry-model").value,inputUnit=document.getElementById("entry-unit").value,inputQty=Number(raw),qty=inputUnit==="kits"?inputQty*data.settings.pairsPerKit:inputQty,shared=kind==="palmilha"||kind==="solado";
-  const line=shared?target.replace("line:",""):modelLine(target),modelId=shared?"":target,modelName=shared?`Linha ${line}`:itemName(data.settings.models,modelId);
-  const candidate={kind,mountingId,modelId,modelName,line,qty,date},missing=stockProblems(ui.editingEntry?.id,candidate);
+  const kind=document.getElementById("entry-kind").value,mountingId=document.getElementById("entry-mounting").value,target=document.getElementById("entry-model").value,inputUnit=document.getElementById("entry-unit").value,inputQty=Number(raw),qty=inputUnit==="kits"?inputQty*data.settings.pairsPerKit:inputQty,shared=kind==="palmilha"||kind==="solado",color=document.getElementById("entry-color").value.trim();
+  if(!color){showToast("Informe a cor para controlar o estoque.");return}
+  const legacyLine=shared&&String(target).startsWith("line:"),modelId=legacyLine?"":target,line=legacyLine?target.replace("line:",""):modelLine(modelId),modelName=legacyLine?`Linha ${line}`:itemName(data.settings.models,modelId);
+  const candidate={kind,mountingId,modelId,modelName,line,qty,date,color},missing=stockProblems(ui.editingEntry?.id,candidate);
   if(missing.length){showToast(`Saldo insuficiente de ${missing.map(c=>c.name.toLowerCase()).join(", ")} para esse lançamento.`);return}
   if(ui.editingEntry){
     const oldWeek=data.weeks[ui.editingEntry.weekKey],idx=oldWeek?.entries.findIndex(x=>x.id===ui.editingEntry.id)??-1;
