@@ -163,7 +163,7 @@ footer{color:var(--soft);font-size:.78rem;text-align:center;padding:8px 0 24px}
     <button class="btn" id="edit-goal" type="button">Editar meta</button>
     <button class="btn primary" id="share" type="button">Compartilhar resumo</button>
   </div>
-  <footer id="app-footer">Base online Fiori Belle · sincronização automática · v2026.10.06-r3</footer>
+  <footer id="app-footer">Base online Fiori Belle · sincronização automática · v2026.10.06-r4</footer>
 </div>
 
 <div class="toast" id="toast" hidden role="status" aria-live="polite"></div>
@@ -416,6 +416,29 @@ function onboarding(){
     ensureWeek(key).goal=Number(raw);data.onboardingDone=true;save();closeModal();render();
   };
 }
+function readyStockForWeek(){
+  const result=FioriInventory.ledger(data,{until:spDate()});
+  const rows=result.rows.filter(x=>x.scope==="global"&&x.sector==="produto_pronto"&&x.qty>0.00001);
+  const byRef=new Map();
+  for(const row of rows){
+    const ref=String(row.target||"").toUpperCase()||"Sem referência";
+    if(!byRef.has(ref))byRef.set(ref,{ref,qty:0,colors:[]});
+    const item=byRef.get(ref);
+    item.qty+=Number(row.qty)||0;
+    item.colors.push({color:FioriInventory.colorLabel(row.color),qty:Number(row.qty)||0});
+  }
+  const items=[...byRef.values()].sort((a,b)=>a.ref.localeCompare(b.ref,"pt-BR",{numeric:true}));
+  return{total:items.reduce((n,x)=>n+x.qty,0),items,issues:result.issues||[]};
+}
+function readyStockWeekMarkup(){
+  const ready=readyStockForWeek();
+  const rows=ready.items.map(item=>`<div class="row"><div class="row-top"><span class="name">Ref. ${esc(item.ref)}</span><span class="value">${fmt(item.qty)} pares</span></div><div class="votes">${item.colors.map(c=>`${esc(c.color)} ${fmt(c.qty)}`).join(" · ")}</div></div>`).join("");
+  return `<div class="block" id="week-ready-stock"><div class="row-top"><div><h2>Estoque pronto atual</h2><p class="sub" style="margin:2px 0 0">Saldo disponível agora na fábrica. Não entra na meta semanal.</p></div><button class="btn small" type="button" id="open-ready-stock">Ver estoque</button></div>
+    <div class="summary-grid"><div class="summary-stat"><strong>${fmt(ready.total)} pares</strong><span>produto pronto em estoque</span></div><div class="summary-stat"><strong>${ready.items.length}</strong><span>referências com saldo</span></div></div>
+    ${rows||'<div class="empty">Nenhum produto pronto em estoque.</div>'}
+    ${ready.issues.length?`<div class="stock-warning">⚠ Existe divergência de estoque a revisar. O saldo acima usa os movimentos válidos atuais.</div>`:""}
+  </div>`;
+}
 function renderWeek(key=ui.viewWeek||currentWeekKey()){
   const readOnly=key!==currentWeekKey(),w=weekData(key),s=weekSummary(key),models=modelsForWeek(key),mountings=mountingsForWeek(key);
   const goal=s.goal,remaining=Math.max(0,goal-s.done),perDay=s.work.remaining?remaining/s.work.remaining:0,maxComponent=Math.max(1,...Object.values(s.componentTotals));
@@ -432,8 +455,7 @@ function renderWeek(key=ui.viewWeek||currentWeekKey()){
     <div class="block"><div class="sub">Semana de ${weekLabel(key)}</div>
       ${goal?`<div class="meter"><div class="meter-top"><div class="meter-num">${fmt(s.done)}<small> / ${fmt(goal)}</small></div><div class="meter-cap">pares prontos<br>${pct(s.rate)}</div></div><div class="meter-track"><div class="meter-fill" style="width:${barWidth(s.done,goal)}%"></div></div></div>`:`<div class="notice">Defina a meta desta semana para calcular percentuais, ritmo e projeção.</div>`}
       <div class="summary-grid"><div class="summary-stat"><strong>${fmt(s.possible)} pares</strong><span>possível produzir agora</span></div><div class="summary-stat"><strong>${fmt(s.projection)} pares</strong><span>projeção semanal</span></div></div>
-    </div>
-    <div class="block"><h2>Componentes disponíveis</h2><p class="sub">Cabedais por modelo; palmilhas e solados compartilhados por linha.</p>
+    </div>\n    ${readOnly?"":readyStockWeekMarkup()}\n    <div class="block"><h2>Componentes disponíveis</h2><p class="sub">Cabedais por modelo; palmilhas e solados compartilhados por linha.</p>
       ${COMPONENTS.map(c=>{const value=s.componentTotals[c.id]||0,isGap=s.gargalo?.id===c.id;return `<div class="row ${isGap?"gargalo":""}"><div class="row-top"><span class="name">${esc(c.name)}${isGap?'<span class="tag">Gargalo</span>':""}</span><span class="value">${fmt(value)} pares</span></div><div class="bar${isGap?"":" secondary"}"><span style="width:${100*value/maxComponent}%"></span></div></div>`}).join("")}
     </div>
     <div class="block"><h2>Ritmo da semana</h2>
@@ -444,6 +466,7 @@ function renderWeek(key=ui.viewWeek||currentWeekKey()){
     <div class="block"><h2>Produção por montagem</h2><p class="sub">Pares prontos e valor a pagar nesta semana.</p>${mountingRows||'<div class="empty">Cadastre ao menos uma montagem em Ajustes.</div>'}</div>
     <div class="block"><h2>Produção por modelo</h2><p class="sub">Cabedal individual; palmilha e solado usados da linha do modelo.</p>${modelRows||'<div class="empty">Cadastre ao menos um modelo em Ajustes.</div>'}</div>`;
   if(readOnly)document.getElementById("back-current").onclick=()=>{ui.viewWeek=null;render();window.scrollTo({top:0,behavior:"smooth"})};
+  const readyButton=document.getElementById("open-ready-stock");if(readyButton)readyButton.onclick=()=>{switchTab("stock");window.scrollTo({top:0,behavior:"smooth"})};
   document.getElementById("edit-goal").hidden=readOnly;
 }
 function entriesForDate(date){
