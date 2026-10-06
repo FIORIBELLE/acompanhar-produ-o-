@@ -199,7 +199,7 @@ const DEFAULTS={
     ],
     workDays:[1,2,3,4,5]
   },
-  weeks:{},lastBackup:null,onboardingDone:false
+  weeks:{},stockLedger:[],factoryExpenses:[],lastBackup:null,onboardingDone:false
 };
 let data=loadData();
 let ui={tab:"week",viewWeek:null,editingEntry:null};
@@ -1117,7 +1117,7 @@ if("serviceWorker" in navigator)navigator.serviceWorker.register("sw.js").catch(
 <script>
 (function factoryExpensesBootstrap(){
   if(!Array.isArray(data.factoryExpenses))data.factoryExpenses=[];
-  const EXPENSE_CATEGORIES=["Matéria-prima","Mão de obra","Energia/água","Frete","Manutenção","Impostos","Aluguel","Outros"];
+  const EXPENSE_CATEGORIES=["Matéria-prima","Mão de obra","Combustível","Energia/água","Frete","Manutenção","Impostos","Aluguel","Pró-labore/Retirada","Outros"];
   const PAYMENT_METHODS=["Pix","Boleto","Cartão","Dinheiro","Transferência","Débito automático","Outro"];
   const expenseMoney=n=>Number(n||0).toLocaleString("pt-BR",{style:"currency",currency:"BRL"});
   const expenseNumber=v=>{
@@ -1139,12 +1139,15 @@ if("serviceWorker" in navigator)navigator.serviceWorker.register("sw.js").catch(
   }
   function expenseSummary(month){
     const rows=expensesForMonth(month);
-    const total=rows.reduce((s,x)=>s+Number(x.amount||0),0);
-    const paid=rows.filter(x=>x.status==="paid").reduce((s,x)=>s+Number(x.amount||0),0);
+    const expenseRows=rows.filter(x=>x.category!=="Pró-labore/Retirada");
+    const withdrawalRows=rows.filter(x=>x.category==="Pró-labore/Retirada");
+    const total=expenseRows.reduce((s,x)=>s+Number(x.amount||0),0);
+    const paid=expenseRows.filter(x=>x.status==="paid").reduce((s,x)=>s+Number(x.amount||0),0);
     const pending=total-paid;
+    const withdrawals=withdrawalRows.reduce((s,x)=>s+Number(x.amount||0),0);
     const byCategory={};
-    for(const x of rows)byCategory[x.category]=(byCategory[x.category]||0)+Number(x.amount||0);
-    return{rows,total,paid,pending,byCategory};
+    for(const x of expenseRows)byCategory[x.category]=(byCategory[x.category]||0)+Number(x.amount||0);
+    return{rows,expenseRows,withdrawalRows,total,paid,pending,withdrawals,byCategory};
   }
   function expenseFormValues(item={}){
     return {date:item.date||spDate(),category:item.category||"Matéria-prima",description:item.description||"",supplier:item.supplier||"",amount:item.amount??"",method:item.method||"Pix",status:item.status||"paid",note:item.note||""};
@@ -1152,6 +1155,7 @@ if("serviceWorker" in navigator)navigator.serviceWorker.register("sw.js").catch(
 
   function renderExpenses(){
     const root=document.getElementById("tab-expenses");if(!root)return;
+    if(!Array.isArray(data.factoryExpenses))data.factoryExpenses=[];
     const s=expenseSummary(expenseMonth),edit=editingExpenseId?data.factoryExpenses.find(x=>x.id===editingExpenseId):null,v=expenseFormValues(edit||{});
     const cats=Object.entries(s.byCategory).sort((a,b)=>b[1]-a[1]);
     root.innerHTML=`
@@ -1161,7 +1165,8 @@ if("serviceWorker" in navigator)navigator.serviceWorker.register("sw.js").catch(
           <div class="summary-stat"><strong>${expenseMoney(s.total)}</strong><span>Total lançado</span></div>
           <div class="summary-stat"><strong>${expenseMoney(s.paid)}</strong><span>Pago</span></div>
           <div class="summary-stat"><strong>${expenseMoney(s.pending)}</strong><span>Pendente</span></div>
-          <div class="summary-stat"><strong>${s.rows.length}</strong><span>Lançamentos</span></div>
+          <div class="summary-stat"><strong>${s.expenseRows.length}</strong><span>Gastos</span></div>
+          <div class="summary-stat"><strong>${expenseMoney(s.withdrawals)}</strong><span>Retiradas · fora dos gastos</span></div>
         </div>
       </div>
       <form class="block" id="expense-form">
@@ -1188,9 +1193,9 @@ if("serviceWorker" in navigator)navigator.serviceWorker.register("sw.js").catch(
       </div>
       <div class="block">
         <h2>Lançamentos</h2><p class="sub">${esc(monthLabel(expenseMonth))}</p>
-        ${s.rows.length?s.rows.map(x=>`<div class="row"><div class="row-top"><div class="entry-main"><div class="entry-title">${esc(x.description)}</div><div class="entry-meta">${fmtDate(x.date)} · ${esc(x.category)}${x.supplier?` · ${esc(x.supplier)}`:""} · ${esc(x.method||"")}</div><div class="entry-meta">${x.status==="paid"?"Pago":"Pendente"}${x.note?` · ${esc(x.note)}`:""}</div></div><div style="text-align:right"><div class="value">${expenseMoney(x.amount)}</div><div class="entry-actions" style="margin-top:5px"><button class="icon-btn" type="button" data-expense-edit="${esc(x.id)}">Editar</button><button class="icon-btn danger" type="button" data-expense-delete="${esc(x.id)}">Apagar</button></div></div></div></div>`).join(""):'<div class="empty">Nenhum gasto lançado.</div>'}
+        ${s.rows.length?s.rows.map(x=>`<div class="row"><div class="row-top"><div class="entry-main"><div class="entry-title">${esc(x.description)}</div><div class="entry-meta">${fmtDate(x.date)} · ${esc(x.category)}${x.category==="Pró-labore/Retirada"?" · fora dos gastos":""}${x.supplier?` · ${esc(x.supplier)}`:""} · ${esc(x.method||"")}</div><div class="entry-meta">${x.status==="paid"?"Pago":"Pendente"}${x.note?` · ${esc(x.note)}`:""}</div></div><div style="text-align:right"><div class="value">${expenseMoney(x.amount)}</div><div class="entry-actions" style="margin-top:5px"><button class="icon-btn" type="button" data-expense-edit="${esc(x.id)}">Editar</button><button class="icon-btn danger" type="button" data-expense-delete="${esc(x.id)}">Apagar</button></div></div></div></div>`).join(""):'<div class="empty">Nenhum lançamento.</div>'}
       </div>
-      <div class="notice"><strong>Backup incluído.</strong> Os gastos da fábrica são salvos no mesmo backup dos demais dados do app.</div>`;
+      <div class="notice"><strong>Base online.</strong> Gastos e retiradas são sincronizados com os demais dados. Pró-labore/Retirada fica registrado, mas não entra no total de gastos.</div>`;
 
     document.getElementById("expense-month").onchange=e=>{expenseMonth=e.target.value||currentMonth();editingExpenseId=null;renderExpenses()};
     document.getElementById("expense-form").onsubmit=e=>{
