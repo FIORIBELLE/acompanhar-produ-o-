@@ -163,7 +163,7 @@ footer{color:var(--soft);font-size:.78rem;text-align:center;padding:8px 0 24px}
     <button class="btn" id="edit-goal" type="button">Editar meta</button>
     <button class="btn primary" id="share" type="button">Compartilhar resumo</button>
   </div>
-  <footer id="app-footer">Base online Fiori Belle · sincronização automática · v2026.10.06-r2</footer>
+  <footer id="app-footer">Base online Fiori Belle · sincronização automática · v2026.10.06-r3</footer>
 </div>
 
 <div class="toast" id="toast" hidden role="status" aria-live="polite"></div>
@@ -737,13 +737,14 @@ if("serviceWorker" in navigator)navigator.serviceWorker.register("sw.js").catch(
     {id:"produto_pronto",name:"Produto pronto",costKey:"total"}
   ];
   const CATALOG=Object.fromEntries(catalog.map(x=>[String(x.ref),x]));
+  const catalogSheet=ref=>{const key=String(ref).toUpperCase();return data.settings.costCatalog?.[key]||CATALOG[key]||null};
   const refs=Object.values(CATALOG).sort((a,b)=>String(a.ref).localeCompare(String(b.ref),"pt-BR",{numeric:true}));
   const localModelRef=m=>String(m?.ref||String(m?.name||"").match(/\b\d{3}R?\b/i)?.[0]||"").toUpperCase();
   const localSheet=ref=>{
     const key=String(ref).toUpperCase();
     const m=data.settings.models.find(x=>localModelRef(x)===key);
     if(!m)return null;
-    const catalog=CATALOG[key]||{};
+    const catalog=catalogSheet(key)||{};
     const complete=m.cabedalCost!==null&&m.cabedalCost!==undefined&&m.cabedalCost!==""&&m.totalCost!==null&&m.totalCost!==undefined&&m.totalCost!==""&&Number.isFinite(Number(m.cabedalCost))&&Number.isFinite(Number(m.totalCost));
     return{
       ...catalog,
@@ -755,14 +756,14 @@ if("serviceWorker" in navigator)navigator.serviceWorker.register("sw.js").catch(
       alert:complete?"":(catalog.alert||"Ficha local com custos incompletos.")
     };
   };
-  const sheetForRef=ref=>{const local=localSheet(ref);return local?.complete?local:(CATALOG[String(ref)]||local||null)};
+  const sheetForRef=ref=>{const local=localSheet(ref);return local?.complete?local:(catalogSheet(ref)||local||null)};
   const allRefSheets=()=>{
-    const map=new Map(refs.map(x=>[String(x.ref),x]));
+    const map=new Map([...refs,...Object.values(data.settings.costCatalog||{})].map(x=>[String(x.ref),x]));
     for(const m of data.settings.models){const s=localSheet(localModelRef(m));if(s?.ref)map.set(String(s.ref),s)}
     return [...map.values()].sort((a,b)=>String(a.ref).localeCompare(String(b.ref),"pt-BR",{numeric:true}));
   };
   if(!Array.isArray(data.stockLedger))data.stockLedger=[];
-  data.stockCatalogUpdatedAt=catalogUpdatedAt;
+  // Read-only catalog timestamp; never overwrite the online revision during rendering.
 
   const stockFmt=n=>Number(n||0).toLocaleString("pt-BR",{maximumFractionDigits:2});
   const stockMoney=n=>Number(n||0).toLocaleString("pt-BR",{style:"currency",currency:"BRL"});
@@ -841,7 +842,7 @@ if("serviceWorker" in navigator)navigator.serviceWorker.register("sw.js").catch(
     if(!root)return;
     const s=summary();
     const hasAny=s.positive.length>0;
-    const updated=new Intl.DateTimeFormat("pt-BR",{dateStyle:"short",timeStyle:"short",timeZone:TZ}).format(new Date(catalogUpdatedAt));
+    const updated=new Intl.DateTimeFormat("pt-BR",{dateStyle:"short",timeStyle:"short",timeZone:TZ}).format(new Date(data.settings.costCatalogUpdatedAt||data.stockCatalogUpdatedAt||catalogUpdatedAt));
     const sectorCards=STOCK_SECTORS.map(sec=>{
       const box=s.bySector[sec.id];
       return `<div class="stock-sector-card">
@@ -874,7 +875,7 @@ if("serviceWorker" in navigator)navigator.serviceWorker.register("sw.js").catch(
       <div class="block stock-total">
         <div class="sub">Valor total parado na fábrica</div>
         <div class="stock-total-value">${stockMoney(s.totalKnown)}</div>
-        <div class="stock-muted">Soma dos valores calculáveis dos 4 setores.</div>
+        <div class="stock-muted">Soma dos valores calculáveis dos 4 setores, pelos custos padrão vigentes. Não representa pagamentos históricos.</div>
         ${s.totalPending?`<div class="stock-warning">⚠ Existem ${stockFmt(s.totalPending)} pares com custo pendente. O total acima é parcial e não usa R$ 0 para completar a conta.</div>`:""}
         ${s.issues.length?`<div class="stock-warning">⚠ Divergência de baixa automática: ${esc(s.issues[0])}${s.issues.length>1?` · mais ${s.issues.length-1} ocorrência(s)`:""}</div>`:""}
       </div>
