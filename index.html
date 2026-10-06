@@ -211,7 +211,7 @@ function loadData(){
     merged.settings.mountings=normalizeMountings(merged.settings.mountings,DEFAULTS.settings.mountings);
     merged.settings.lineCosts={...clone(DEFAULTS.settings.lineCosts),...(merged.settings.lineCosts||{})};
     merged.settings.workDays=Array.isArray(merged.settings.workDays)?merged.settings.workDays.filter(n=>Number.isInteger(n)&&n>=0&&n<=6):[1,2,3,4,5];
-    if(!merged.settings.mountings.some(x=>x.id==="legacy"))merged.settings.mountings.push({id:"legacy",name:"Não informado",rate:0,active:false});
+    if(!merged.settings.mountings.some(x=>x.id==="legacy"))merged.settings.mountings.push({id:"legacy",name:"Não informado",rate:null,active:false});
     const defaultMounting="legacy";
     for(const w of Object.values(merged.weeks))for(const e of w.entries||[]){
       if(!e.mountingId)e.mountingId=defaultMounting;
