@@ -1,6 +1,6 @@
 "use strict";
-const CACHE="acompanhar-producao-shell-v15";
-const SHELL=["./","./index.html","./manifest.webmanifest"];
+const CACHE="acompanhar-producao-shell-v16";
+const SHELL=["./","./index.html","./manifest.webmanifest","./inventory-guard.js"];
 
 self.addEventListener("install",event=>{
   event.waitUntil(caches.open(CACHE).then(cache=>cache.addAll(SHELL)).then(()=>self.skipWaiting()));

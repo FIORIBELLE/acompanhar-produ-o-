@@ -163,7 +163,7 @@ footer{color:var(--soft);font-size:.78rem;text-align:center;padding:8px 0 24px}
     <button class="btn" id="edit-goal" type="button">Editar meta</button>
     <button class="btn primary" id="share" type="button">Compartilhar resumo</button>
   </div>
-  <footer id="app-footer">Base online Fiori Belle · sincronização automática · v2026.10.06-r1</footer>
+  <footer id="app-footer">Base online Fiori Belle · sincronização automática · v2026.10.06-r2</footer>
 </div>
 
 <div class="toast" id="toast" hidden role="status" aria-live="polite"></div>
@@ -172,6 +172,7 @@ footer{color:var(--soft);font-size:.78rem;text-align:center;padding:8px 0 24px}
 </div>
 <input id="backup-file" type="file" accept="application/json,.json" hidden>
 
+<script src="inventory-guard.js"></script>
 <script>
 "use strict";
 const STORAGE_KEY="acompanhar_producao_v2";
@@ -292,13 +293,7 @@ function modelLine(modelId,modelName,models){
 }
 function entryLine(e){return e.line||modelLine(e.modelId,e.modelName)}
 function availableLines(){return [...new Set(["300","500","600",...activeModels().map(m=>modelLine(m.id,m.name))])].sort()}
-function possibleForMounting(mt){
-  return Object.entries(mt.lines||{}).reduce((total,[line,parts])=>{
-    const cabedais=Object.entries(mt.models||{}).reduce((sum,[id,m])=>sum+(modelLine(id,m.name)===line?Math.max(0,m.cabedal||0):0),0);
-    const possible=line==="300"?Math.min(cabedais,parts.solado||0):Math.min(cabedais,parts.palmilha||0,parts.solado||0);
-    return total+Math.max(0,possible);
-  },0);
-}
+function possibleForMounting(mt){return FioriInventory.possibleForMounting(data,mt)}
 function previousGoal(key){
   const keys=Object.keys(data.weeks).filter(k=>k<key&&Number(data.weeks[k]?.goal)>0).sort().reverse();
   return keys.length?Number(data.weeks[keys[0]].goal):null;
@@ -324,34 +319,15 @@ function totalsFor(key){
   const w=weekData(key),models=modelsForWeek(key),mountings=mountingsForWeek(key),byModel=Object.fromEntries(models.map(m=>[m.id,0])),byMounting=Object.fromEntries(mountings.map(m=>[m.id,0]));
   const received=Object.fromEntries(COMPONENTS.map(c=>[c.id,0]));
   let done=0;
-  for(const e of w.entries.filter(x=>entryInWeek(x,key))){
+  for(const e of w.entries.filter(x=>entryInWeek(x,key)&&(key!==currentWeekKey()||x.date<=spDate()))){
     if(e.kind==="finished"){done+=Number(e.qty)||0;if(Object.hasOwn(byModel,e.modelId))byModel[e.modelId]+=Number(e.qty)||0;if(Object.hasOwn(byMounting,e.mountingId))byMounting[e.mountingId]+=Number(e.qty)||0}
     if(Object.hasOwn(received,e.kind))received[e.kind]+=Number(e.qty)||0;
   }
   return{received,byModel,byMounting,done};
 }
 function inventoryByMountingUntil(date,excludeId=null,candidate=null){
-  const stock={};
-  const ensureMounting=id=>stock[id]||(stock[id]={models:{},lines:{}});
-  const ensureModel=(mt,id,name)=>mt.models[id]||(mt.models[id]={name:name||itemName(data.settings.models,id),cabedal:0});
-  const ensureLine=(mt,line)=>mt.lines[line]||(mt.lines[line]={palmilha:0,solado:0});
-  const apply=e=>{
-    if(!e||e.id===excludeId||e.date>date)return;
-    const qty=Number(e.qty)||0,mt=ensureMounting(e.mountingId),line=entryLine(e);
-    if(e.kind==="finished"){
-      ensureModel(mt,e.modelId,e.modelName).cabedal-=qty;
-      const shared=ensureLine(mt,line);shared.solado-=qty;if(line!=="300")shared.palmilha-=qty;
-    }else if(e.kind==="cabedal")ensureModel(mt,e.modelId,e.modelName).cabedal+=qty;
-    else if(e.kind==="palmilha"||e.kind==="solado")ensureLine(mt,line)[e.kind]+=qty;
-  };
-  for(const w of Object.values(data.weeks))for(const e of w.entries||[])apply(e);
-  if(candidate)apply(candidate);
-  for(const mt of data.settings.mountings)ensureMounting(mt.id);
-  for(const mt of Object.values(stock)){
-    for(const m of data.settings.models)ensureModel(mt,m.id,m.name);
-    for(const line of availableLines())ensureLine(mt,line);
-  }
-  return stock;
+  const source=excludeId||candidate?FioriInventory.withProductionChange(data,excludeId,candidate):data;
+  return FioriInventory.mountingBalances(source,date).stock;
 }
 function inventoryUntil(date){
   const byMounting=inventoryByMountingUntil(date),models=data.settings.models;
@@ -366,26 +342,13 @@ function inventoryUntil(date){
   }));
 }
 function stockAfterChange(mountingId,modelId,excludeId,candidate){
-  const stock=inventoryByMountingUntil("9999-12-31",excludeId,candidate),mt=stock[mountingId]||{models:{},lines:{}};
+  const stock=inventoryByMountingUntil(candidate?.date||spDate(),excludeId,candidate),mt=stock[mountingId]||{models:{},lines:{}};
   const line=candidate?.line||modelLine(modelId,candidate?.modelName),model=mt.models[modelId]||{},shared=mt.lines[line]||{};
   return{cabedal:model.cabedal||0,palmilha:shared.palmilha||0,solado:shared.solado||0,line};
 }
-function candidateStockProblems(excludeId,candidate){
-  if(!candidate||candidate.kind!=="finished")return[];
-  const s=stockAfterChange(candidate.mountingId,candidate.modelId,excludeId,candidate),missing=[];
-  if(s.cabedal<0)missing.push(COMPONENTS.find(c=>c.id==="cabedal"));
-  if(s.solado<0)missing.push(COMPONENTS.find(c=>c.id==="solado"));
-  if(s.line!=="300"&&s.palmilha<0)missing.push(COMPONENTS.find(c=>c.id==="palmilha"));
-  return missing.filter(Boolean);
-}
-function stockProblems(excludeId,candidate){
-  const stock=inventoryByMountingUntil("9999-12-31",excludeId,candidate),missing=new Set();
-  for(const mt of Object.values(stock)){
-    for(const m of Object.values(mt.models))if((m.cabedal||0)<0)missing.add("cabedal");
-    for(const line of Object.values(mt.lines)){if((line.palmilha||0)<0)missing.add("palmilha");if((line.solado||0)<0)missing.add("solado")}
-  }
-  return COMPONENTS.filter(c=>missing.has(c.id));
-}
+function inventoryIssueObjects(issues){return issues.map(x=>({...x,name:COMPONENTS.find(c=>c.id===x.sector)?.name||"Estoque"}))}
+function candidateStockProblems(excludeId,candidate){return inventoryIssueObjects(FioriInventory.productionChangeIssues(data,excludeId,candidate))}
+function stockProblems(excludeId,candidate){return candidateStockProblems(excludeId,candidate)}
 function workdayStats(key,readOnly=false){
   const days=data.settings.workDays,today=spDate(),end=weekEnd(key);
   let elapsed=0,remaining=0,total=0;
@@ -398,7 +361,8 @@ function workdayStats(key,readOnly=false){
   return{elapsed,remaining,total};
 }
 function weekSummary(key){
-  const w=weekData(key),t=totalsFor(key),goal=Number(w.goal)||0,stock=inventoryUntil(weekEnd(key)),stockByMounting=inventoryByMountingUntil(weekEnd(key));
+  const balanceDate=key===currentWeekKey()?spDate():weekEnd(key);
+  const w=weekData(key),t=totalsFor(key),goal=Number(w.goal)||0,stock=inventoryUntil(balanceDate),stockByMounting=inventoryByMountingUntil(balanceDate);
   const componentTotals={
     cabedal:Object.values(stockByMounting).reduce((sum,mt)=>sum+Object.values(mt.models).reduce((a,m)=>a+Math.max(0,m.cabedal||0),0),0),
     palmilha:Object.values(stockByMounting).reduce((sum,mt)=>sum+Object.values(mt.lines).reduce((a,line)=>a+Math.max(0,line.palmilha||0),0),0),
@@ -456,8 +420,8 @@ function renderWeek(key=ui.viewWeek||currentWeekKey()){
   const readOnly=key!==currentWeekKey(),w=weekData(key),s=weekSummary(key),models=modelsForWeek(key),mountings=mountingsForWeek(key);
   const goal=s.goal,remaining=Math.max(0,goal-s.done),perDay=s.work.remaining?remaining/s.work.remaining:0,maxComponent=Math.max(1,...Object.values(s.componentTotals));
   const modelRows=models.map(m=>{
-    const value=s.byModel[m.id]||0,mg=Number(w.modelGoals[m.id])||0,stock=s.stock[m.id]||{},line=stock.line||modelLine(m.id,m.name),possible=Math.max(0,line==="300"?Math.min(stock.cabedal||0,stock.solado||0):Math.min(stock.cabedal||0,stock.palmilha||0,stock.solado||0));
-    return `<div class="row"><div class="row-top"><span class="name">Modelo ${esc(m.name)}</span><span class="value">${fmt(value)} prontos</span></div><div class="votes">${fichasText(value)}${mg?` · meta ${fmt(mg)} · ${pct(100*value/mg)}`:""}</div>${mg?`<div class="bar secondary"><span style="width:${barWidth(value,mg)}%"></span></div>`:""}<div class="calc">Cabedal ${fmt(stock.cabedal)} · Linha ${esc(line)}: palmilhas ${fmt(stock.palmilha)} e solados ${fmt(stock.solado)} · pode produzir até ${fmt(possible)} pares deste modelo</div></div>`;
+    const value=s.byModel[m.id]||0,mg=Number(w.modelGoals[m.id])||0,stock=s.stock[m.id]||{},line=stock.line||modelLine(m.id,m.name),possible=Object.values(s.stockByMounting).reduce((sum,mt)=>sum+FioriInventory.possibleForModel(data,mt,m),0);
+    return `<div class="row"><div class="row-top"><span class="name">Modelo ${esc(m.name)}</span><span class="value">${fmt(value)} prontos</span></div><div class="votes">${fichasText(value)}${mg?` · meta ${fmt(mg)} · ${pct(100*value/mg)}`:""}</div>${mg?`<div class="bar secondary"><span style="width:${barWidth(value,mg)}%"></span></div>`:""}<div class="calc">Cabedal ${fmt(stock.cabedal)} · Linha ${esc(line)}: palmilhas ${fmt(stock.palmilha)} e solados ${fmt(stock.solado)} · pode montar agora ${fmt(possible)} pares (mesma montagem e cor)</div></div>`;
   }).join("");
   const mountingRows=mountings.map(mt=>{
     const value=s.byMounting[mt.id]||0,amount=value*(Number(mt.rate)||0),stock=s.stockByMounting[mt.id]||{models:{},lines:{}},possible=possibleForMounting(stock);
@@ -493,7 +457,7 @@ function renderEntry(){
       <div class="field"><label for="entry-date">Data</label><input id="entry-date" type="date" value="${date}"></div>
       <div class="field"><label for="entry-mounting">Montagem</label><select id="entry-mounting">${mountings.map(m=>`<option value="${m.id}">${esc(m.name)}</option>`).join("")}</select></div>
       <div class="form-grid"><div class="field"><label for="entry-kind">O que está entrando</label><select id="entry-kind">${COMPONENTS.map(c=>`<option value="${c.id}">${esc(c.name)}</option>`).join("")}<option value="finished">Produto pronto</option></select></div><div class="field"><label for="entry-model" id="entry-target-label">Modelo</label><select id="entry-model"></select></div></div>
-      <div class="field"><label for="entry-color">Cor</label><input id="entry-color" list="entry-colors" placeholder="Ex.: Preto" autocomplete="off"><datalist id="entry-colors"><option value="Preto"><option value="Caramelo"><option value="Ouro Light"><option value="Rose"><option value="Off White"></datalist></div>
+      <div class="field"><label for="entry-color">Cor</label><input id="entry-color" list="entry-colors" placeholder="Cor ou Sem cor discriminada" autocomplete="off"><datalist id="entry-colors"><option value="Sem cor discriminada"><option value="Preto"><option value="Caramelo"><option value="Ouro Light"><option value="Rose"><option value="Off White"></datalist></div>
       <div class="form-grid"><div class="field"><label for="entry-unit">Unidade</label><select id="entry-unit"><option value="pairs">Pares</option><option value="kits">Kits de ${fmt(data.settings.pairsPerKit)} pares</option></select></div><div class="field"><label for="entry-qty">Quantidade</label><input id="entry-qty" inputmode="numeric" pattern="[0-9]*" placeholder="0" autocomplete="off"></div></div>
       <div class="quick"><button type="button" data-quick="kit">+1 kit</button><button type="button" data-quick="sheet">+1 ficha (${fmt(data.settings.pairsPerSheet)})</button></div>
       <div class="button-row">${ui.editingEntry?'<button type="button" class="btn" id="cancel-edit">Cancelar</button>':""}<button class="btn primary" type="submit">${ui.editingEntry?"Salvar alteração":"Adicionar lançamento"}</button></div>
@@ -536,7 +500,7 @@ function saveEntry(e){
   if(!color){showToast("Informe a cor para controlar o estoque.");return}
   const line=shared?String(target).replace("line:",""):modelLine(target),modelId=shared?"":target,modelName=shared?`Linha ${line}`:itemName(data.settings.models,modelId);
   const candidate={kind,mountingId,modelId,modelName,line,qty,date,color},missing=candidateStockProblems(ui.editingEntry?.id,candidate);
-  if(missing.length){showToast(`Saldo insuficiente de ${missing.map(c=>c.name.toLowerCase()).join(", ")} para montar esse produto.`);return}
+  if(missing.length){showToast(missing[0].message);return}
   if(ui.editingEntry){
     const oldWeek=data.weeks[ui.editingEntry.weekKey],idx=oldWeek?.entries.findIndex(x=>x.id===ui.editingEntry.id)??-1;
     if(idx<0){showToast("Lançamento não encontrado.");return}
@@ -547,7 +511,7 @@ function saveEntry(e){
 function deleteEntry(weekKey,id){
   const e=data.weeks[weekKey]?.entries.find(x=>x.id===id);if(!e)return;
   const missing=stockProblems(id,null);
-  if(missing.length){showToast(`Não é possível apagar: faltaria ${missing.map(c=>c.name.toLowerCase()).join(", ")}.`);return}
+  if(missing.length){showToast("Não é possível apagar. "+missing[0].message);return}
   const target=e.kind==="palmilha"||e.kind==="solado"?`linha ${entryLine(e)}`:`modelo ${e.modelName||itemName(data.settings.models,e.modelId)}`;
   confirmAction({title:"Apagar lançamento?",message:`${e.qty} pares da ${target}, montagem ${e.mountingName||itemName(data.settings.mountings,e.mountingId)}, serão removidos.`,confirmText:"Apagar",danger:true,onConfirm:()=>{data.weeks[weekKey].entries=data.weeks[weekKey].entries.filter(x=>x.id!==id);save();render();showToast("Lançamento apagado.")}});
 }
@@ -808,110 +772,17 @@ if("serviceWorker" in navigator)navigator.serviceWorker.register("sw.js").catch(
     return Number(raw.includes(",")?raw.replace(/\./g,"").replace(",","."):raw);
   };
   const sectorById=id=>STOCK_SECTORS.find(s=>s.id===id);
-  const normalizeColor=value=>{
-    const raw=String(value||"").trim();
-    if(!raw)return"";
-    const k=raw.toLocaleLowerCase("pt-BR").normalize("NFD").replace(/[\u0300-\u036f]/g,"");
-    if(k==="preto")return"Preto";
-    if(k==="rose"||k==="rosa")return"Rose";
-    if(k==="off"||k==="off white"||k==="off-white"||k==="branco")return"Off White";
-    if(k==="caramelo")return"Caramelo";
-    if(k==="ouro"||k==="ouro light"||k==="ourolight")return"Ouro Light";
-    return raw.replace(/\s+/g," ");
-  };
+  const normalizeColor=value=>String(value||"").trim()?FioriInventory.colorLabel(FioriInventory.colorKey(value)):"";
   const movementDelta=m=>(m.direction==="out"?-1:1)*(Number(m.qty)||0);
   const itemKey=(sector,ref,color)=>[sector,String(ref),normalizeColor(color).toLocaleLowerCase("pt-BR")].join("|");
   const linePoolRef=line=>`@line:${String(line||"Outros")}`;
   const displayRef=ref=>String(ref||"").startsWith("@line:")?`Linha ${String(ref).slice(6)}`:String(ref||"")||"Sem referência";
 
-  function refFromEntry(e){
-    if(!e)return"";
-    const candidates=[e.stockRef,e.modelName,e.modelId?itemName(data.settings.models,e.modelId,""):""];
-    for(const value of candidates){
-      const m=String(value||"").toUpperCase().match(/\b\d{3}R?\b/);
-      if(m&&sheetForRef(m[0]))return m[0];
-    }
-    return"";
-  }
-  function ensureBalanceRow(map,sector,ref,color){
-    const normalizedColor=normalizeColor(color)||"Sem cor";
-    const key=itemKey(sector,ref,normalizedColor);
-    if(!map.has(key))map.set(key,{sector,ref:String(ref),color:normalizedColor,qty:0});
-    return map.get(key);
-  }
-  function addBalance(map,sector,ref,color,qty){
-    const row=ensureBalanceRow(map,sector,ref,color);
-    row.qty+=(Number(qty)||0);
-    return row;
-  }
-  function consumeBalance(map,{sector,ref,line,color,qty,allowLineFallback=false},issues){
-    let remaining=Number(qty)||0;
-    if(remaining<=0)return;
-    const wantedColor=normalizeColor(color)||"Sem cor";
-    const exactRef=String(ref||"");
-    const lineRef=linePoolRef(line);
-    const candidateRows=()=>[...map.values()].filter(r=>r.sector===sector&&r.qty>0.00001);
-    const takeWhere=predicate=>{
-      for(const row of candidateRows().filter(predicate)){
-        if(remaining<=0)break;
-        const take=Math.min(row.qty,remaining);
-        row.qty-=take;remaining-=take;
-      }
-    };
-    if(exactRef){
-      takeWhere(r=>r.ref===exactRef&&r.color===wantedColor);
-      takeWhere(r=>r.ref===exactRef&&r.color==="Sem cor");
-      takeWhere(r=>r.ref===exactRef);
-    }
-    if(allowLineFallback){
-      const lineCode=String(line||"");
-      const rowLineCode=r=>{
-        if(String(r.ref).startsWith("@line:"))return String(r.ref).slice(6);
-        const raw=sheetForRef(r.ref)?.line||"";
-        const m=String(raw).match(/\d{3}/);
-        return m?m[0]:"";
-      };
-      takeWhere(r=>r.ref===lineRef&&r.color===wantedColor);
-      takeWhere(r=>r.ref===lineRef&&r.color==="Sem cor");
-      takeWhere(r=>r.ref===lineRef);
-      takeWhere(r=>rowLineCode(r)===lineCode&&r.color===wantedColor);
-      takeWhere(r=>rowLineCode(r)===lineCode&&r.color==="Sem cor");
-      takeWhere(r=>rowLineCode(r)===lineCode);
-    }
-    if(remaining>0.00001)issues.push(`${sectorById(sector)?.name||sector}: faltaram ${stockFmt(remaining)} pares para baixar na Ref. ${displayRef(exactRef||lineRef)}.`);
-  }
-  function productionBalanceState(){
-    const map=new Map(),issues=[];
-    const events=[];
-    for(const w of Object.values(data.weeks||{}))for(const e of w.entries||[])events.push(e);
-    events.sort((a,b)=>String(a.date||"").localeCompare(String(b.date||""))||String(a.createdAt||"").localeCompare(String(b.createdAt||"")));
-    for(const e of events){
-      const qty=Number(e.qty)||0;
-      if(qty<=0)continue;
-      const color=normalizeColor(e.color)||"Sem cor";
-      const ref=refFromEntry(e);
-      const line=entryLine(e);
-      if(e.kind==="cabedal"){
-        addBalance(map,"cabedal",ref||"@sem-ref",color,qty);
-      }else if(e.kind==="palmilha"||e.kind==="solado"){
-        addBalance(map,e.kind,linePoolRef(line),color,qty);
-      }else if(e.kind==="finished"){
-        const sheet=sheetForRef(ref);
-        consumeBalance(map,{sector:"cabedal",ref,line,color,qty,allowLineFallback:false},issues);
-        consumeBalance(map,{sector:"solado",ref,line,color,qty,allowLineFallback:true},issues);
-        if(sheet?.usesPalmilha!==false)consumeBalance(map,{sector:"palmilha",ref,line,color,qty,allowLineFallback:true},issues);
-        addBalance(map,"produto_pronto",ref||"@sem-ref",color,qty);
-      }
-    }
-    return{map,issues};
-  }
+
   function balanceState(excludeId=null){
-    const state=productionBalanceState(),map=state.map;
-    for(const m of data.stockLedger){
-      if(!m||m.id===excludeId)continue;
-      addBalance(map,m.sector,m.ref,normalizeColor(m.color)||"Sem cor",movementDelta(m));
-    }
-    return{rows:[...map.values()],issues:state.issues};
+    const source=excludeId?{...data,stockLedger:(data.stockLedger||[]).filter(x=>x.id!==excludeId)}:data;
+    const result=FioriInventory.ledger(source,{until:spDate()});
+    return{rows:result.rows.filter(x=>x.scope==="global").map(x=>({sector:x.sector,ref:x.target,color:FioriInventory.colorLabel(x.color),qty:x.qty})),issues:result.issues.map(x=>x.message)};
   }
   function balances(excludeId=null){return balanceState(excludeId).rows}
 
@@ -1023,7 +894,7 @@ if("serviceWorker" in navigator)navigator.serviceWorker.register("sw.js").catch(
           <div class="field"><label for="stock-sector">Setor</label><select id="stock-sector">${STOCK_SECTORS.map(x=>`<option value="${x.id}">${esc(x.name)}</option>`).join("")}</select></div>
           <div class="field"><label for="stock-ref" id="stock-ref-label">Referência</label><select id="stock-ref"></select></div>
         </div>
-        <div class="field"><label for="stock-color">Cor</label><input id="stock-color" list="stock-colors" placeholder="Ex.: Preto" autocomplete="off"><datalist id="stock-colors"><option value="Preto"><option value="Caramelo"><option value="Ouro Light"><option value="Rose"><option value="Off White"></datalist></div>
+        <div class="field"><label for="stock-color">Cor</label><input id="stock-color" list="stock-colors" placeholder="Ex.: Preto" autocomplete="off"><datalist id="stock-colors"><option value="Sem cor discriminada"><option value="Preto"><option value="Caramelo"><option value="Ouro Light"><option value="Rose"><option value="Off White"></datalist></div>
         <div class="form-grid">
           <div class="field"><label for="stock-unit">Unidade</label><select id="stock-unit"><option value="pairs">Pares</option><option value="kits">Kits (${stockFmt(data.settings.pairsPerKit)} pares)</option><option value="sheets">Fichas (${stockFmt(data.settings.pairsPerSheet)} pares)</option></select></div>
           <div class="field"><label for="stock-qty">Quantidade</label><input id="stock-qty" inputmode="decimal" placeholder="0" autocomplete="off"></div>
@@ -1105,7 +976,10 @@ if("serviceWorker" in navigator)navigator.serviceWorker.register("sw.js").catch(
         const current=balances().find(x=>itemKey(x.sector,x.ref,x.color)===itemKey(sector,ref,color))?.qty||0;
         if(qty>current){showToast(`Saldo insuficiente: há ${stockFmt(current)} pares neste item.`);return}
       }
-      data.stockLedger.push({id:uid("stk"),date,direction,sector,ref,color,qty,note,createdAt:new Date().toISOString()});
+      const movement={id:uid("stk"),date,direction,sector,ref,color,qty,note,createdAt:new Date().toISOString()};
+      const problems=FioriInventory.validate({...data,stockLedger:[...(data.stockLedger||[]),movement]});
+      if(problems.length){showToast(problems[0].message);return}
+      data.stockLedger.push(movement);
       save();renderStock();showToast("Movimento registrado. Aguardando confirmação online.");
     };
 
@@ -1113,10 +987,8 @@ if("serviceWorker" in navigator)navigator.serviceWorker.register("sw.js").catch(
       const id=btn.dataset.stockDelete;
       const movement=data.stockLedger.find(x=>x.id===id);
       if(!movement)return;
-      const after=balances(id);
-      const key=itemKey(movement.sector,movement.ref,movement.color);
-      const would=after.find(x=>itemKey(x.sector,x.ref,x.color)===key)?.qty||0;
-      if(would<-.00001){showToast("Não é possível apagar: o saldo desse item ficaria negativo.");return}
+      const problems=FioriInventory.validate({...data,stockLedger:data.stockLedger.filter(x=>x.id!==id)});
+      if(problems.length){showToast("Não é possível apagar. "+problems[0].message);return}
       confirmAction({title:"Apagar movimento?",message:`${movement.direction==="out"?"Saída":"Entrada"} de ${stockFmt(movement.qty)} pares da Ref. ${movement.ref} · ${movement.color}.`,confirmText:"Apagar",danger:true,onConfirm:()=>{
         data.stockLedger=data.stockLedger.filter(x=>x.id!==id);save();renderStock();showToast("Movimento apagado.");
       }});
@@ -1312,7 +1184,7 @@ if("serviceWorker" in navigator)navigator.serviceWorker.register("sw.js").catch(
   async function restorePendingOrRemote(row){remoteRevision=Number(row.revision||0);const pending=readPending();if(!pending){applyRemote(row);return}if(deepEqual(pending.data,row.data)){writePending(null);localStorage.removeItem(CONFLICT_KEY);syncConflict=false;applyRemote(row);return}if(Number(pending.baseRevision)===remoteRevision){applyingRemote=true;localStorage.setItem(STORAGE_KEY,JSON.stringify(pending.data));data=loadData();applyingRemote=false;try{render()}catch(_){}setStatus("Alteração pendente · sincronizando…");scheduleFlush(30);return}setConflict(pending,row,"base changed while local change was pending")}
   async function loadRemoteState(){setStatus("Carregando base online…");const row=await fetchRemoteState();await restorePendingOrRemote(row);unlock();subscribeRealtime()}
   function subscribeRealtime(){if(realtimeChannel)return;realtimeChannel=sb.channel("fiori-belle-producao-state").on("postgres_changes",{event:"UPDATE",schema:"public",table:"app_state",filter:"workspace_id=eq."+WORKSPACE_ID},payload=>{const row=payload.new;if(!row)return;if(hasPending()||flushPromise||syncConflict){setStatus("Sincronizando · atualização remota aguardando");return}if(Number(row.revision||0)>remoteRevision)applyRemote(row,true)}).subscribe()}
-  async function flushRemoteSave(){if(flushPromise||syncConflict)return flushPromise;flushPromise=(async()=>{while(true){const pending=readPending();if(!pending)break;const {data:{session}}=await sb.auth.getSession();if(!session){setStatus("Entre para sincronizar");break}setStatus("Sincronizando…");const sentVersion=Number(pending.localVersion||1),sentData=clone(pending.data);const {data:result,error}=await sb.rpc("save_app_state",{p_workspace_id:WORKSPACE_ID,p_data:sentData,p_expected_revision:remoteRevision});if(error){const msg=String(error.message||error||"");if(msg.toLowerCase().includes("revision conflict")){const latest=await fetchRemoteState();setConflict(readPending()||pending,latest,msg)}else{setStatus(navigator.onLine?"Erro de sincronização · pendente":"Sem internet · pendente");showToast("Alteração preservada neste aparelho e pendente de sincronização.")}break}const row=Array.isArray(result)?result[0]:result;remoteRevision=Number(row?.new_revision||remoteRevision+1);const current=readPending();if(!current||Number(current.localVersion||0)===sentVersion){writePending(null);localStorage.removeItem(CONFLICT_KEY);setStatus("Base online · confirmada");showToast("Alterações confirmadas na base online.");break}current.baseRevision=remoteRevision;writePending(current)}})().finally(()=>{flushPromise=null});return flushPromise}
+  async function flushRemoteSave(){if(flushPromise||syncConflict)return flushPromise;flushPromise=(async()=>{while(true){const pending=readPending();if(!pending)break;const {data:{session}}=await sb.auth.getSession();if(!session){setStatus("Entre para sincronizar");break}setStatus("Sincronizando…");const sentVersion=Number(pending.localVersion||1),sentData=clone(pending.data);const {data:result,error}=await sb.rpc("save_app_state",{p_workspace_id:WORKSPACE_ID,p_data:sentData,p_expected_revision:remoteRevision});if(error){const msg=String(error.message||error||"");if(String(error.code)==="23514"){setStatus("Estoque recusado · corrija o lançamento pendente");showToast(msg)}else if(msg.toLowerCase().includes("revision conflict")){const latest=await fetchRemoteState();setConflict(readPending()||pending,latest,msg)}else{setStatus(navigator.onLine?"Erro de sincronização · pendente":"Sem internet · pendente");showToast("Alteração preservada neste aparelho e pendente de sincronização.")}break}const row=Array.isArray(result)?result[0]:result;remoteRevision=Number(row?.new_revision||remoteRevision+1);const current=readPending();if(!current||Number(current.localVersion||0)===sentVersion){writePending(null);localStorage.removeItem(CONFLICT_KEY);setStatus("Base online · confirmada");showToast("Alterações confirmadas na base online.");break}current.baseRevision=remoteRevision;writePending(current)}})().finally(()=>{flushPromise=null});return flushPromise}
   const originalSave=save;
   save=function(){originalSave();if(applyingRemote)return;const current=readPending();writePending({data:clone(data),baseRevision:current?.baseRevision??remoteRevision,localVersion:Number(current?.localVersion||0)+1,savedAt:new Date().toISOString()});if(syncConflict){setStatus("Conflito protegido · alteração preservada localmente");return}setStatus("Aguardando confirmação online…");scheduleFlush()};
   window.addEventListener("online",()=>{if(hasPending()&&!syncConflict)scheduleFlush(20)});
