@@ -163,7 +163,7 @@ footer{color:var(--soft);font-size:.78rem;text-align:center;padding:8px 0 24px}
     <button class="btn" id="edit-goal" type="button">Editar meta</button>
     <button class="btn primary" id="share" type="button">Compartilhar resumo</button>
   </div>
-  <footer id="app-footer">Base online Fiori Belle · sincronização automática · v2026.10.06-r6</footer>
+  <footer id="app-footer">Base online Fiori Belle · sincronização automática · v2026.10.06-r6.1</footer>
 </div>
 
 <div class="toast" id="toast" hidden role="status" aria-live="polite"></div>
@@ -182,21 +182,16 @@ const DEFAULTS={
   version:4,
   settings:{
     pairsPerSheet:72,pairsPerKit:6,
-    lineCosts:{
-      "300":{solado:11,palmilha:0,usesPalmilha:false},
-      "500":{solado:6.1,palmilha:3.4,usesPalmilha:true},
-      "600":{solado:7.1,palmilha:4.05,usesPalmilha:true},
-      "800":{solado:3.7,palmilha:3.5,usesPalmilha:true}
-    },
+    lineCosts:{},
     models:[
       {id:"m501",name:"501",active:true},{id:"m506",name:"506",active:true},
       {id:"m507",name:"507",active:true},{id:"m509",name:"509",active:true},
       {id:"m601",name:"601",active:true}
     ],
     mountings:[
-      {id:"bruno_barbara",name:"Bruno e Bárbara",rate:2.60,active:true},
-      {id:"jeferson",name:"Jeferson",rate:4.00,active:true},
-      {id:"legacy",name:"Não informado",rate:0,active:false}
+      {id:"bruno_barbara",name:"Bruno e Bárbara",rate:null,active:true},
+      {id:"jeferson",name:"Jeferson",rate:null,active:true},
+      {id:"legacy",name:"Não informado",rate:null,active:false}
     ],
     workDays:[1,2,3,4,5]
   },
@@ -216,7 +211,7 @@ function loadData(){
     merged.settings.mountings=normalizeMountings(merged.settings.mountings,DEFAULTS.settings.mountings);
     merged.settings.lineCosts={...clone(DEFAULTS.settings.lineCosts),...(merged.settings.lineCosts||{})};
     merged.settings.workDays=Array.isArray(merged.settings.workDays)?merged.settings.workDays.filter(n=>Number.isInteger(n)&&n>=0&&n<=6):[1,2,3,4,5];
-    if(!merged.settings.mountings.some(x=>x.id==="legacy"))merged.settings.mountings.push({id:"legacy",name:"Não informado",rate:0,active:false});
+    if(!merged.settings.mountings.some(x=>x.id==="legacy"))merged.settings.mountings.push({id:"legacy",name:"Não informado",rate:null,active:false});
     const defaultMounting="legacy";
     for(const w of Object.values(merged.weeks))for(const e of w.entries||[]){
       if(!e.mountingId)e.mountingId=defaultMounting;
