@@ -163,7 +163,7 @@ footer{color:var(--soft);font-size:.78rem;text-align:center;padding:8px 0 24px}
     <button class="btn" id="edit-goal" type="button">Editar meta</button>
     <button class="btn primary" id="share" type="button">Compartilhar resumo</button>
   </div>
-  <footer id="app-footer">Base online Fiori Belle · sincronização automática · v2026.10.06-r4</footer>
+  <footer id="app-footer">Base online Fiori Belle · sincronização automática · v2026.10.06-r5</footer>
 </div>
 
 <div class="toast" id="toast" hidden role="status" aria-live="polite"></div>
@@ -1041,6 +1041,9 @@ if("serviceWorker" in navigator)navigator.serviceWorker.register("sw.js").catch(
 <script>
 (function factoryExpensesBootstrap(){
   if(!Array.isArray(data.factoryExpenses))data.factoryExpenses=[];
+  if(!data.financeControl||typeof data.financeControl!=="object")data.financeControl={version:1,advances:[],settlements:[],createdAt:new Date().toISOString()};
+  if(!Array.isArray(data.financeControl.advances))data.financeControl.advances=[];
+  if(!Array.isArray(data.financeControl.settlements))data.financeControl.settlements=[];
   const EXPENSE_CATEGORIES=["Matéria-prima","Mão de obra","Combustível","Energia/água","Frete","Manutenção","Impostos","Aluguel","Pró-labore/Retirada","Outros"];
   const PAYMENT_METHODS=["Pix","Boleto","Cartão","Dinheiro","Transferência","Débito automático","Outro"];
   const expenseMoney=n=>Number(n||0).toLocaleString("pt-BR",{style:"currency",currency:"BRL"});
@@ -1073,6 +1076,41 @@ if("serviceWorker" in navigator)navigator.serviceWorker.register("sw.js").catch(
     for(const x of expenseRows)byCategory[x.category]=(byCategory[x.category]||0)+Number(x.amount||0);
     return{rows,expenseRows,withdrawalRows,total,paid,pending,withdrawals,byCategory};
   }
+  const toCents=n=>Math.round(Number(n||0)*100);
+  const fromCents=n=>Number(n||0)/100;
+  const advanceExpense=a=>data.factoryExpenses.find(x=>x.id===a.expenseId);
+  const settlementDiscountFor=(advanceId,excludeSettlementId=null)=>data.financeControl.settlements.filter(x=>x.id!==excludeSettlementId).reduce((sum,x)=>sum+(x.allocations||[]).filter(a=>a.advanceId===advanceId).reduce((n,a)=>n+Number(a.amountCents||0),0),0);
+  const advanceBalanceCents=a=>Math.max(0,toCents(advanceExpense(a)?.amount)-settlementDiscountFor(a.id));
+  const openAdvances=mountingId=>data.financeControl.advances.map(a=>({...a,expense:advanceExpense(a),balanceCents:advanceBalanceCents(a)})).filter(a=>a.mountingId===mountingId&&a.expense&&a.balanceCents>0);
+  const linkedExpenseIds=()=>new Set([
+    ...data.financeControl.advances.map(a=>a.expenseId),
+    ...data.financeControl.settlements.map(x=>x.netExpenseId).filter(Boolean)
+  ]);
+  function settlementRows(){
+    return [...data.financeControl.settlements].sort((a,b)=>String(b.date).localeCompare(String(a.date))||String(b.createdAt).localeCompare(String(a.createdAt)));
+  }
+  function financePanel(){
+    const advances=data.financeControl.advances.map(a=>({...a,expense:advanceExpense(a),balanceCents:advanceBalanceCents(a)})).filter(a=>a.expense);
+    const open=advances.filter(a=>a.balanceCents>0);
+    const openTotal=open.reduce((n,a)=>n+a.balanceCents,0);
+    const mountings=data.settings.mountings.filter(x=>x.active!==false);
+    const settlements=settlementRows();
+    return `<div class="block">
+      <h2>Adiantamentos e acertos</h2><p class="sub">O adiantamento já pago é descontado do acerto. O sistema registra como novo gasto somente o valor líquido pago no acerto.</p>
+      <div class="summary-grid"><div class="summary-stat"><strong>${expenseMoney(fromCents(openTotal))}</strong><span>adiantamentos em aberto</span></div><div class="summary-stat"><strong>${settlements.length}</strong><span>acertos registrados</span></div></div>
+      ${open.length?open.map(a=>`<div class="row"><div class="row-top"><span class="name">${esc(data.settings.mountings.find(m=>m.id===a.mountingId)?.name||a.mountingId)}</span><span class="value">${expenseMoney(fromCents(a.balanceCents))}</span></div><div class="votes">Pago em ${fmtDate(a.expense.date)} · previsto para ${a.dueDate?fmtDate(a.dueDate):"sem data"} · ${esc(a.expense.description)}</div></div>`).join(""):'<div class="empty">Nenhum adiantamento em aberto.</div>'}
+      <form id="settlement-form" style="margin-top:12px">
+        <div class="form-grid"><div class="field"><label for="settlement-date">Data do acerto</label><input id="settlement-date" type="date" value="${spDate()}"></div>
+        <div class="field"><label for="settlement-mounting">Montagem</label><select id="settlement-mounting"><option value="">Selecione</option>${mountings.map(m=>`<option value="${esc(m.id)}">${esc(m.name)}</option>`).join("")}</select></div></div>
+        <div class="field"><label for="settlement-gross">Valor bruto devido</label><input id="settlement-gross" inputmode="decimal" placeholder="0,00"></div>
+        <div class="calc" id="settlement-preview">Selecione a montagem e informe o bruto. Os adiantamentos em aberto serão descontados até o limite do valor devido.</div>
+        <div class="field"><label for="settlement-method">Forma do pagamento líquido</label><select id="settlement-method">${PAYMENT_METHODS.map(x=>`<option>${esc(x)}</option>`).join("")}</select></div>
+        <div class="field"><label for="settlement-note">Observação</label><input id="settlement-note" placeholder="Opcional"></div>
+        <button class="btn primary full" type="submit">Registrar acerto</button>
+      </form>
+      ${settlements.length?`<div style="margin-top:14px"><strong>Histórico de acertos</strong>${settlements.map(x=>{const discounted=(x.allocations||[]).reduce((n,a)=>n+Number(a.amountCents||0),0),net=Number(x.grossCents||0)-discounted;return `<div class="row"><div class="row-top"><span class="name">${esc(data.settings.mountings.find(m=>m.id===x.mountingId)?.name||x.mountingId)} · ${fmtDate(x.date)}</span><span class="value">${expenseMoney(fromCents(x.grossCents))} bruto</span></div><div class="votes">Adiantamentos ${expenseMoney(fromCents(discounted))} · pago no acerto ${expenseMoney(fromCents(net))}</div></div>`}).join("")}</div>`:""}
+    </div>`;
+  }
   function expenseFormValues(item={}){
     return {date:item.date||spDate(),category:item.category||"Matéria-prima",description:item.description||"",supplier:item.supplier||"",amount:item.amount??"",method:item.method||"Pix",status:item.status||"paid",note:item.note||""};
   }
@@ -1093,7 +1131,7 @@ if("serviceWorker" in navigator)navigator.serviceWorker.register("sw.js").catch(
           <div class="summary-stat"><strong>${expenseMoney(s.withdrawals)}</strong><span>Retiradas · fora dos gastos</span></div>
         </div>
       </div>
-      <form class="block" id="expense-form">
+      ${financePanel()}\n      <form class="block" id="expense-form">
         <h2>${edit?"Editar gasto":"Novo gasto"}</h2>
         <div class="form-grid">
           <div class="field"><label for="expense-date">Data</label><input id="expense-date" type="date" value="${esc(v.date)}"></div>
@@ -1122,6 +1160,35 @@ if("serviceWorker" in navigator)navigator.serviceWorker.register("sw.js").catch(
       <div class="notice"><strong>Base online.</strong> Gastos e retiradas são sincronizados com os demais dados. Pró-labore/Retirada fica registrado, mas não entra no total de gastos.</div>`;
 
     document.getElementById("expense-month").onchange=e=>{expenseMonth=e.target.value||currentMonth();editingExpenseId=null;renderExpenses()};
+    const settlementMounting=document.getElementById("settlement-mounting"),settlementGross=document.getElementById("settlement-gross"),settlementPreview=document.getElementById("settlement-preview");
+    function settlementPlan(){
+      const mountingId=settlementMounting.value,gross=expenseNumber(settlementGross.value),grossCents=Number.isFinite(gross)?toCents(gross):0;
+      let remaining=grossCents;const allocations=[];
+      for(const a of openAdvances(mountingId).sort((x,y)=>String(x.expense.date).localeCompare(String(y.expense.date)))){
+        if(remaining<=0)break;const used=Math.min(remaining,a.balanceCents);if(used>0){allocations.push({advanceId:a.id,amountCents:used});remaining-=used}
+      }
+      return{mountingId,grossCents,allocations,discountedCents:allocations.reduce((n,a)=>n+a.amountCents,0),netCents:Math.max(0,remaining)};
+    }
+    function updateSettlementPreview(){
+      const p=settlementPlan();
+      if(!p.mountingId||p.grossCents<=0){settlementPreview.textContent="Selecione a montagem e informe o bruto. Os adiantamentos em aberto serão descontados até o limite do valor devido.";return}
+      settlementPreview.innerHTML=`Bruto <strong>${expenseMoney(fromCents(p.grossCents))}</strong> − adiantamentos <strong>${expenseMoney(fromCents(p.discountedCents))}</strong> = pagar agora <strong>${expenseMoney(fromCents(p.netCents))}</strong>`;
+    }
+    settlementMounting.onchange=updateSettlementPreview;settlementGross.oninput=updateSettlementPreview;
+    document.getElementById("settlement-form").onsubmit=e=>{
+      e.preventDefault();const p=settlementPlan(),date=document.getElementById("settlement-date").value,method=document.getElementById("settlement-method").value,note=document.getElementById("settlement-note").value.trim();
+      if(!date||!p.mountingId){showToast("Informe a data e a montagem.");return}
+      if(p.grossCents<=0){showToast("Informe um valor bruto válido.");return}
+      if(!p.allocations.length){showToast("Esta montagem não tem adiantamento em aberto. Lance o pagamento normalmente.");return}
+      const mt=data.settings.mountings.find(m=>m.id===p.mountingId),settlementId=uid("acerto"),now=new Date().toISOString();
+      let netExpenseId=null;
+      if(p.netCents>0){
+        netExpenseId=uid("gasto");
+        data.factoryExpenses.push({id:netExpenseId,date,category:"Mão de obra",description:`Pagamento líquido do acerto · ${mt?.name||p.mountingId}`,supplier:mt?.name||"",amount:fromCents(p.netCents),method,status:"paid",note:`Acerto bruto ${expenseMoney(fromCents(p.grossCents))}; adiantamentos descontados ${expenseMoney(fromCents(p.discountedCents))}.${note?" "+note:""}`,createdAt:now,updatedAt:now});
+      }
+      data.financeControl.settlements.push({id:settlementId,date,mountingId:p.mountingId,grossCents:p.grossCents,allocations:p.allocations,netExpenseId,note,createdAt:now});
+      save();expenseMonth=monthKey(date);renderExpenses();showToast("Acerto registrado. Aguardando confirmação online.");
+    };
     document.getElementById("expense-form").onsubmit=e=>{
       e.preventDefault();
       const date=document.getElementById("expense-date").value;
@@ -1145,9 +1212,9 @@ if("serviceWorker" in navigator)navigator.serviceWorker.register("sw.js").catch(
       expenseMonth=monthKey(date);save();renderExpenses();
     };
     document.getElementById("cancel-expense-edit")?.addEventListener("click",()=>{editingExpenseId=null;renderExpenses()});
-    document.querySelectorAll("[data-expense-edit]").forEach(b=>b.onclick=()=>{editingExpenseId=b.dataset.expenseEdit;const x=data.factoryExpenses.find(y=>y.id===editingExpenseId);if(x)expenseMonth=monthKey(x.date);renderExpenses();window.scrollTo({top:0,behavior:"smooth"})});
+    document.querySelectorAll("[data-expense-edit]").forEach(b=>b.onclick=()=>{if(linkedExpenseIds().has(b.dataset.expenseEdit)){showToast("Este lançamento está vinculado a um adiantamento/acerto e está protegido.");return}editingExpenseId=b.dataset.expenseEdit;const x=data.factoryExpenses.find(y=>y.id===editingExpenseId);if(x)expenseMonth=monthKey(x.date);renderExpenses();window.scrollTo({top:0,behavior:"smooth"})});
     document.querySelectorAll("[data-expense-delete]").forEach(b=>b.onclick=()=>{
-      const item=data.factoryExpenses.find(x=>x.id===b.dataset.expenseDelete);if(!item)return;
+      const item=data.factoryExpenses.find(x=>x.id===b.dataset.expenseDelete);if(!item)return;if(linkedExpenseIds().has(item.id)){showToast("Este lançamento está vinculado a um adiantamento/acerto e não pode ser apagado.");return}
       confirmAction({title:"Apagar gasto?",message:`${item.description} · ${expenseMoney(item.amount)}`,confirmText:"Apagar",danger:true,onConfirm:()=>{data.factoryExpenses=data.factoryExpenses.filter(x=>x.id!==item.id);save();renderExpenses();showToast("Gasto apagado.")}});
     });
   }
