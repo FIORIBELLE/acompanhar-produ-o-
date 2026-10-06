@@ -144,7 +144,7 @@ footer{color:var(--soft);font-size:.78rem;text-align:center;padding:8px 0 24px}
   <nav role="tablist" aria-label="Navegação principal">
     <button role="tab" aria-selected="true" data-tab="week">Semana</button>
     <button role="tab" aria-selected="false" data-tab="stock">Estoque</button>
-    <button role="tab" aria-selected="false" data-tab="expenses">Gastos</button>
+    <button role="tab" aria-selected="false" data-tab="expenses">Gastos</button>\n    <button role="tab" aria-selected="false" data-tab="sales">Pedidos</button>
     <button role="tab" aria-selected="false" data-tab="entry">Lançar</button>
     <button role="tab" aria-selected="false" data-tab="history">Histórico</button>
     <button role="tab" aria-selected="false" data-tab="settings">Ajustes</button>
@@ -153,7 +153,7 @@ footer{color:var(--soft);font-size:.78rem;text-align:center;padding:8px 0 24px}
   <main>
     <section id="tab-week"></section>
     <section id="tab-stock" hidden></section>
-    <section id="tab-expenses" hidden></section>
+    <section id="tab-expenses" hidden></section>\n    <section id="tab-sales" hidden></section>
     <section id="tab-entry" hidden></section>
     <section id="tab-history" hidden></section>
     <section id="tab-settings" hidden></section>
@@ -163,7 +163,7 @@ footer{color:var(--soft);font-size:.78rem;text-align:center;padding:8px 0 24px}
     <button class="btn" id="edit-goal" type="button">Editar meta</button>
     <button class="btn primary" id="share" type="button">Compartilhar resumo</button>
   </div>
-  <footer id="app-footer">Base online Fiori Belle · sincronização automática · v2026.10.06-r6.1</footer>
+  <footer id="app-footer">Base online Fiori Belle · sincronização automática · v2026.10.06-r7</footer>
 </div>
 
 <div class="toast" id="toast" hidden role="status" aria-live="polite"></div>
@@ -1220,10 +1220,72 @@ if("serviceWorker" in navigator)navigator.serviceWorker.register("sw.js").catch(
   switchTab=function(tab){
     ui.tab=tab;
     document.querySelectorAll("nav [role=tab]").forEach(b=>b.setAttribute("aria-selected",b.dataset.tab===tab));
-    ["week","stock","expenses","entry","history","settings"].forEach(k=>{const el=document.getElementById("tab-"+k);if(el)el.hidden=k!==tab});
+    ["week","stock","expenses","sales","entry","history","settings"].forEach(k=>{const el=document.getElementById("tab-"+k);if(el)el.hidden=k!==tab});
     document.querySelector(".actions").hidden=tab!=="week";
     render();
   };
+  document.querySelectorAll('nav [role=tab]').forEach(b=>b.onclick=()=>switchTab(b.dataset.tab));
+})();
+</script>
+
+
+<!-- SALES_CONTROL_V1 -->
+<script>
+(function salesControlBootstrap(){
+  if(!data.salesControl||typeof data.salesControl!=="object")data.salesControl={version:1,clients:[],orders:[],payments:[],createdAt:new Date().toISOString()};
+  for(const k of ["clients","orders","payments"])if(!Array.isArray(data.salesControl[k]))data.salesControl[k]=[];
+  const moneyCents=c=>Number(c||0)/100;
+  const salesMoney=c=>moneyCents(c).toLocaleString("pt-BR",{style:"currency",currency:"BRL"});
+  const parseSalesMoney=v=>{const raw=String(v??"").trim().replace(/\s/g,"");if(!raw)return NaN;const n=Number(raw.includes(",")?raw.replace(/\./g,"").replace(",","."):raw);return Number.isFinite(n)?Math.round(n*100):NaN};
+  const clientById=id=>data.salesControl.clients.find(x=>x.id===id);
+  const orderPaidCents=id=>data.salesControl.payments.reduce((n,p)=>n+(p.allocations||[]).filter(a=>a.orderId===id).reduce((s,a)=>s+Number(a.amountCents||0),0),0);
+  const orderBalanceCents=o=>Math.max(0,Number(o.totalCents||0)-orderPaidCents(o.id));
+  const clientBalanceCents=id=>data.salesControl.orders.filter(o=>o.clientId===id&&o.deliveryStatus!=="cancelled").reduce((n,o)=>n+orderBalanceCents(o),0);
+  const paymentAllocatedCents=p=>(p.allocations||[]).reduce((n,a)=>n+Number(a.amountCents||0),0);
+  const paymentCreditCents=p=>Math.max(0,Number(p.amountCents||0)-paymentAllocatedCents(p));
+  const clientCreditCents=id=>data.salesControl.payments.filter(p=>p.clientId===id).reduce((n,p)=>n+paymentCreditCents(p),0);
+  const orderStatus=o=>{const paid=orderPaidCents(o.id),total=Number(o.totalCents||0);return paid<=0?"Em aberto":paid>=total?"Pago":"Parcial"};
+  const receiptText=o=>{
+    const c=clientById(o.clientId),payments=data.salesControl.payments.filter(p=>(p.allocations||[]).some(a=>a.orderId===o.id)).sort((a,b)=>a.date.localeCompare(b.date));
+    const lines=["JR Calçados",`Cliente: ${c?.name||"—"}`,`Pedido: ${fmtDate(o.date)}`,"",...o.items.map(i=>`${i.ref} · ${i.qty} pares × ${salesMoney(i.unitPriceCents)} = ${salesMoney(i.qty*i.unitPriceCents)}`),"",`Total do pedido: ${salesMoney(o.totalCents)}`];
+    if(payments.length){lines.push("","Pagamentos:");for(const p of payments){const a=(p.allocations||[]).find(x=>x.orderId===o.id);lines.push(`${fmtDate(p.date)} · ${salesMoney(a.amountCents)}`)}}
+    lines.push("",`Total pago: ${salesMoney(orderPaidCents(o.id))}`,`Saldo: ${salesMoney(orderBalanceCents(o))}`);
+    return lines.join("\n");
+  };
+  function renderSales(){
+    const root=document.getElementById("tab-sales");if(!root)return;
+    const clients=[...data.salesControl.clients].sort((a,b)=>a.name.localeCompare(b.name,"pt-BR"));
+    const orders=[...data.salesControl.orders].sort((a,b)=>String(b.date).localeCompare(String(a.date))||String(b.createdAt||"").localeCompare(String(a.createdAt||"")));
+    const payments=[...data.salesControl.payments].sort((a,b)=>String(b.date).localeCompare(String(a.date))||String(b.createdAt||"").localeCompare(String(a.createdAt||"")));
+    const receivable=orders.filter(o=>o.deliveryStatus!=="cancelled").reduce((n,o)=>n+orderBalanceCents(o),0);
+    const receivedMonth=payments.filter(p=>String(p.date).slice(0,7)===spDate().slice(0,7)).reduce((n,p)=>n+Number(p.amountCents||0),0);
+    const openCount=orders.filter(o=>o.deliveryStatus!=="cancelled"&&orderBalanceCents(o)>0).length;
+    root.innerHTML=`
+      <div class="block"><h2>Pedidos e recebimentos</h2><p class="sub">Valores recebidos são movimentos separados dos pedidos. Pagamentos são alocados aos pedidos mais antigos em aberto.</p>
+        <div class="summary-grid"><div class="summary-stat"><strong>${salesMoney(receivable)}</strong><span>a receber</span></div><div class="summary-stat"><strong>${salesMoney(receivedMonth)}</strong><span>recebido no mês</span></div><div class="summary-stat"><strong>${openCount}</strong><span>pedidos em aberto</span></div><div class="summary-stat"><strong>${orders.length-openCount}</strong><span>demais pedidos</span></div></div>
+      </div>
+      <form class="block" id="client-form"><h2>Novo cliente</h2><div class="form-grid"><div class="field"><label>Nome</label><input id="sales-client-name" placeholder="Ex.: Rifa"></div><div class="field"><label>Observação</label><input id="sales-client-note" placeholder="Opcional"></div></div><button class="btn primary" type="submit">Adicionar cliente</button></form>
+      <form class="block" id="order-form"><h2>Novo pedido</h2><div class="form-grid"><div class="field"><label>Cliente</label><select id="order-client"><option value="">Selecione</option>${clients.map(c=>`<option value="${esc(c.id)}">${esc(c.name)}</option>`).join("")}</select></div><div class="field"><label>Data</label><input id="order-date" type="date" value="${spDate()}"></div></div>
+        <div class="field"><label>Itens</label><textarea id="order-items" rows="4" placeholder="Uma linha por item: 506; 432; 27,445&#10;507; 276; 27,325"></textarea><div class="hint">Formato: referência ; quantidade de pares ; preço por par</div></div>
+        <div class="form-grid"><div class="field"><label>Entrega</label><select id="order-delivery"><option value="pending">Pendente</option><option value="partial">Parcial</option><option value="delivered">Entregue</option></select></div><div class="field"><label>Observação</label><input id="order-note" placeholder="Opcional"></div></div><button class="btn primary" type="submit">Registrar pedido</button>
+      </form>
+      <form class="block" id="payment-form"><h2>Registrar recebimento</h2><div class="form-grid"><div class="field"><label>Cliente</label><select id="payment-client"><option value="">Selecione</option>${clients.map(c=>`<option value="${esc(c.id)}">${esc(c.name)}</option>`).join("")}</select></div><div class="field"><label>Data</label><input id="payment-date" type="date" value="${spDate()}"></div></div>
+        <div class="form-grid"><div class="field"><label>Valor recebido</label><input id="payment-amount" inputmode="decimal" placeholder="0,00"></div><div class="field"><label>Forma</label><select id="payment-method"><option>Pix</option><option>Dinheiro</option><option>Transferência</option><option>Outro</option></select></div></div>
+        <div class="calc" id="payment-preview">O pagamento será aplicado primeiro ao pedido mais antigo em aberto. Se sobrar valor, ficará como crédito do cliente.</div><div class="field"><label>Observação</label><input id="payment-note" placeholder="Opcional"></div><button class="btn primary" type="submit">Registrar recebimento</button>
+      </form>
+      <div class="block"><h2>Clientes</h2>${clients.length?clients.map(c=>`<div class="row"><div class="row-top"><span class="name">${esc(c.name)}</span><span class="value">${salesMoney(clientBalanceCents(c.id))} a receber</span></div><div class="votes">Crédito não alocado: ${salesMoney(clientCreditCents(c.id))}</div></div>`).join(""):'<div class="empty">Nenhum cliente cadastrado.</div>'}</div>
+      <div class="block"><h2>Pedidos</h2>${orders.length?orders.map(o=>{const c=clientById(o.clientId),paid=orderPaidCents(o.id),bal=orderBalanceCents(o);return `<div class="row"><div class="row-top"><div><div class="entry-title">${esc(c?.name||"Cliente")} · ${fmtDate(o.date)}</div><div class="entry-meta">${o.items.reduce((n,i)=>n+Number(i.qty||0),0)} pares · ${orderStatus(o)} · entrega ${({pending:"pendente",partial:"parcial",delivered:"entregue",cancelled:"cancelado"})[o.deliveryStatus]||o.deliveryStatus}</div></div><span class="value">${salesMoney(bal)}</span></div><div class="calc">Pedido ${salesMoney(o.totalCents)} · pago ${salesMoney(paid)} · saldo <strong>${salesMoney(bal)}</strong></div><div class="entry-actions" style="margin-top:8px"><button class="icon-btn" type="button" data-sales-receipt="${esc(o.id)}">Recibo</button></div></div>`}).join(""):'<div class="empty">Nenhum pedido cadastrado.</div>'}</div>
+      <div class="block"><h2>Recebimentos</h2>${payments.length?payments.map(p=>`<div class="row"><div class="row-top"><span class="name">${esc(clientById(p.clientId)?.name||"Cliente")} · ${fmtDate(p.date)}</span><span class="value">${salesMoney(p.amountCents)}</span></div><div class="votes">Alocado ${salesMoney(paymentAllocatedCents(p))}${paymentCreditCents(p)?` · crédito ${salesMoney(paymentCreditCents(p))}`:""} · ${esc(p.method||"")}</div></div>`).join(""):'<div class="empty">Nenhum recebimento cadastrado.</div>'}</div>`;
+
+    document.getElementById("client-form").onsubmit=e=>{e.preventDefault();const name=document.getElementById("sales-client-name").value.trim(),note=document.getElementById("sales-client-note").value.trim();if(!name){showToast("Informe o nome do cliente.");return}if(data.salesControl.clients.some(c=>c.name.toLocaleLowerCase("pt-BR")===name.toLocaleLowerCase("pt-BR"))){showToast("Este cliente já está cadastrado.");return}data.salesControl.clients.push({id:uid("cli"),name,note,createdAt:new Date().toISOString()});save();renderSales();showToast("Cliente registrado. Aguardando confirmação online.")};
+    document.getElementById("order-form").onsubmit=e=>{e.preventDefault();const clientId=document.getElementById("order-client").value,date=document.getElementById("order-date").value,deliveryStatus=document.getElementById("order-delivery").value,note=document.getElementById("order-note").value.trim(),raw=document.getElementById("order-items").value.trim();if(!clientId||!date||!raw){showToast("Informe cliente, data e itens.");return}const items=[];for(const line of raw.split(/\n+/)){const parts=line.split(";").map(x=>x.trim());if(parts.length<3){showToast("Use: referência ; pares ; preço por par.");return}const qty=Number(parts[1]),unitPriceCents=parseSalesMoney(parts[2]);if(!parts[0]||!Number.isSafeInteger(qty)||qty<=0||!Number.isFinite(unitPriceCents)||unitPriceCents<0){showToast("Há item inválido no pedido.");return}items.push({ref:parts[0].toUpperCase(),qty,unitPriceCents})}const totalCents=items.reduce((n,i)=>n+i.qty*i.unitPriceCents,0);data.salesControl.orders.push({id:uid("ped"),clientId,date,items,totalCents,deliveryStatus,note,createdAt:new Date().toISOString()});save();renderSales();showToast("Pedido registrado. Aguardando confirmação online.")};
+    document.getElementById("payment-form").onsubmit=e=>{e.preventDefault();const clientId=document.getElementById("payment-client").value,date=document.getElementById("payment-date").value,amountCents=parseSalesMoney(document.getElementById("payment-amount").value),method=document.getElementById("payment-method").value,note=document.getElementById("payment-note").value.trim();if(!clientId||!date||!Number.isFinite(amountCents)||amountCents<=0){showToast("Informe cliente, data e valor recebido.");return}let remaining=amountCents;const allocations=[];const eligible=data.salesControl.orders.filter(o=>o.clientId===clientId&&o.deliveryStatus!=="cancelled"&&o.date<=date&&orderBalanceCents(o)>0).sort((a,b)=>a.date.localeCompare(b.date)||String(a.createdAt||"").localeCompare(String(b.createdAt||"")));for(const o of eligible){if(remaining<=0)break;const use=Math.min(remaining,orderBalanceCents(o));if(use>0){allocations.push({orderId:o.id,amountCents:use});remaining-=use}}data.salesControl.payments.push({id:uid("rec"),clientId,date,amountCents,method,note,allocations,createdAt:new Date().toISOString()});save();renderSales();showToast("Recebimento registrado. Aguardando confirmação online.")};
+    document.querySelectorAll("[data-sales-receipt]").forEach(b=>b.onclick=async()=>{const o=data.salesControl.orders.find(x=>x.id===b.dataset.salesReceipt);if(!o)return;const txt=receiptText(o);try{if(navigator.share)await navigator.share({title:"Recibo JR Calçados",text:txt});else{await navigator.clipboard.writeText(txt);showToast("Recibo copiado.")}}catch(e){if(e.name!=="AbortError")showToast("Não foi possível compartilhar o recibo.")}});
+  }
+  const prevRenderSales=render;
+  render=function(){if(ui.tab==="sales"){ensureWeek();renderSales();return}prevRenderSales()};
+  const prevSwitchSales=switchTab;
+  switchTab=function(tab){prevSwitchSales(tab);if(tab==="sales"){["week","stock","expenses","sales","entry","history","settings"].forEach(k=>{const el=document.getElementById("tab-"+k);if(el)el.hidden=k!==tab});renderSales()}};
   document.querySelectorAll('nav [role=tab]').forEach(b=>b.onclick=()=>switchTab(b.dataset.tab));
 })();
 </script>
