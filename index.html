@@ -163,7 +163,7 @@ footer{color:var(--soft);font-size:.78rem;text-align:center;padding:8px 0 24px}
     <button class="btn" id="edit-goal" type="button">Editar meta</button>
     <button class="btn primary" id="share" type="button">Compartilhar resumo</button>
   </div>
-  <footer id="app-footer">Base online Fiori Belle · sincronização automática.</footer>
+  <footer id="app-footer">Base online Fiori Belle · sincronização automática · v2026.10.06-r1</footer>
 </div>
 
 <div class="toast" id="toast" hidden role="status" aria-live="polite"></div>
@@ -226,13 +226,18 @@ function loadData(){
     return merged;
   }catch(_){return clone(DEFAULTS)}
 }
+function nullableNumber(value){
+  if(value===null||value===undefined||value==="")return null;
+  const n=Number(value);
+  return Number.isFinite(n)?n:null;
+}
 function normalizeItems(items,fallback){
   if(!Array.isArray(items)||!items.length)return clone(fallback);
   return items.filter(x=>x&&x.id&&x.name).map(x=>({
     id:String(x.id),name:String(x.name),active:x.active!==false,
     ref:x.ref?String(x.ref).toUpperCase():"",line:x.line?String(x.line):"",
-    cabedalCost:Number.isFinite(Number(x.cabedalCost))?Number(x.cabedalCost):null,
-    totalCost:Number.isFinite(Number(x.totalCost))?Number(x.totalCost):null,
+    cabedalCost:nullableNumber(x.cabedalCost),
+    totalCost:nullableNumber(x.totalCost),
     usesPalmilha:x.usesPalmilha!==false
   }));
 }
@@ -537,7 +542,7 @@ function saveEntry(e){
     if(idx<0){showToast("Lançamento não encontrado.");return}
     const item=oldWeek.entries[idx];oldWeek.entries.splice(idx,1);const newWeek=ensureWeek(weekKeyFor(date));newWeek.entries.push({...item,...candidate,inputUnit,inputQty,mountingName:itemName(data.settings.mountings,mountingId),updatedAt:new Date().toISOString()});ui.editingEntry=null;
   }else ensureWeek(weekKeyFor(date)).entries.push({id:uid("e"),...candidate,inputUnit,inputQty,mountingName:itemName(data.settings.mountings,mountingId),createdAt:new Date().toISOString()});
-  save();render();showToast("Lançamento salvo.");
+  save();render();showToast("Lançamento registrado. Aguardando confirmação online.");
 }
 function deleteEntry(weekKey,id){
   const e=data.weeks[weekKey]?.entries.find(x=>x.id===id);if(!e)return;
@@ -687,19 +692,32 @@ function addMounting(){
   showModal(`<h2 id="modal-title">Adicionar montagem</h2><div class="field"><label for="new-mounting">Nome</label><input id="new-mounting" autocomplete="off" placeholder="Nome da equipe"></div><div class="field"><label for="new-rate">Valor por par</label><input id="new-rate" inputmode="decimal" placeholder="Ex.: 3,50"></div><div class="button-row"><button class="btn" data-modal-close>Cancelar</button><button class="btn primary" id="confirm-mounting">Adicionar</button></div>`);
   document.getElementById("confirm-mounting").onclick=()=>{const name=document.getElementById("new-mounting").value.trim(),rate=parseMoney(document.getElementById("new-rate").value);if(!name){showToast("Digite o nome da montagem.");return}if(!Number.isFinite(rate)||rate<0){showToast("Digite um valor válido por par.");return}data.settings.mountings.push({id:uid("mt"),name,rate:Math.round(rate*100)/100,active:true});syncCurrentSnapshots();save();closeModal();render();showToast("Montagem adicionada.")};
 }
-function exportBackup(){
-  data.lastBackup=new Date().toISOString();save();
-  const payload={app:"acompanhar-producao",exportedAt:data.lastBackup,data:clone(data)};
-  const blob=new Blob([JSON.stringify(payload,null,2)],{type:"application/json"}),url=URL.createObjectURL(blob),a=document.createElement("a");
-  a.href=url;a.download=`acompanhar-producao-backup-${spDate()}.json`;document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),1500);render();showToast("Backup exportado.");
+async function exportBackup(){
+  try{
+    let snapshot=clone(data),revision=null;
+    if(window.fioriOnline?.onlineMode){
+      if(window.fioriOnline.hasPending?.())throw new Error("Há alterações pendentes. Aguarde a confirmação online antes do backup.");
+      const row=await window.fioriOnline.getConfirmedState();snapshot=clone(row.data);revision=Number(row.revision||0);
+    }
+    const exportedAt=new Date().toISOString();
+    const payload={app:"acompanhar-producao",exportedAt,revision,data:snapshot};
+    const raw=JSON.stringify(payload,null,2),digest=await crypto.subtle.digest("SHA-256",new TextEncoder().encode(raw));
+    payload.sha256=[...new Uint8Array(digest)].map(b=>b.toString(16).padStart(2,"0")).join("");
+    const blob=new Blob([JSON.stringify(payload,null,2)],{type:"application/json"}),url=URL.createObjectURL(blob),a=document.createElement("a");
+    a.href=url;a.download=`acompanhar-producao-backup-${exportedAt.replace(/[:.]/g,"-")}.json`;document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),1500);
+    showToast("Backup da base confirmada exportado.");
+  }catch(e){showToast(String(e?.message||"Não foi possível exportar o backup."))}
 }
 function validBackup(obj){return obj&&obj.app==="acompanhar-producao"&&obj.data&&obj.data.settings&&Array.isArray(obj.data.settings.models)&&obj.data.weeks&&typeof obj.data.weeks==="object"}
 async function importBackup(file){
+  if(window.fioriOnline?.onlineMode){
+    showModal(`<h2 id="modal-title">Restauração protegida</h2><p>Este app usa uma base online compartilhada. Importar um backup aqui poderia substituir dados de todos os aparelhos.</p><p>Use o procedimento administrativo de restauração em ambiente isolado.</p><button class="btn primary full" data-modal-close>Fechar</button>`);
+    document.getElementById("backup-file").value="";return;
+  }
   try{
     const parsed=JSON.parse(await file.text());if(!validBackup(parsed))throw new Error("Arquivo incompatível");
-    confirmAction({title:"Substituir todos os dados?",message:"A importação apagará os dados atuais deste aparelho e colocará os dados do backup no lugar.",confirmText:"Importar e substituir",danger:true,onConfirm:()=>{localStorage.setItem(STORAGE_KEY,JSON.stringify(parsed.data));data=loadData();ui={tab:"week",viewWeek:null,editingEntry:null};save();switchTab("week");showToast("Backup importado.")}});
-  }catch(e){showToast("Este arquivo não é um backup válido do app.")}
-  finally{document.getElementById("backup-file").value=""}
+    confirmAction({title:"Substituir dados locais?",message:"Esta ação só é permitida fora do modo online.",confirmText:"Importar",danger:true,onConfirm:()=>{localStorage.setItem(STORAGE_KEY,JSON.stringify(parsed.data));data=loadData();ui={tab:"week",viewWeek:null,editingEntry:null};save();switchTab("week");showToast("Backup importado localmente.")}});
+  }catch(e){showToast("Este arquivo não é um backup válido do app.")}finally{document.getElementById("backup-file").value=""}
 }
 function shareText(){
   const key=currentWeekKey(),s=weekSummary(key),mountings=mountingsForWeek(key);
@@ -758,10 +776,20 @@ if("serviceWorker" in navigator)navigator.serviceWorker.register("sw.js").catch(
   const refs=Object.values(CATALOG).sort((a,b)=>String(a.ref).localeCompare(String(b.ref),"pt-BR",{numeric:true}));
   const localModelRef=m=>String(m?.ref||String(m?.name||"").match(/\b\d{3}R?\b/i)?.[0]||"").toUpperCase();
   const localSheet=ref=>{
-    const m=data.settings.models.find(x=>localModelRef(x)===String(ref).toUpperCase());
+    const key=String(ref).toUpperCase();
+    const m=data.settings.models.find(x=>localModelRef(x)===key);
     if(!m)return null;
+    const catalog=CATALOG[key]||{};
     const complete=m.cabedalCost!==null&&m.cabedalCost!==undefined&&m.cabedalCost!==""&&m.totalCost!==null&&m.totalCost!==undefined&&m.totalCost!==""&&Number.isFinite(Number(m.cabedalCost))&&Number.isFinite(Number(m.totalCost));
-    return{ref:localModelRef(m),model:m.name,line:m.line||modelLine(m.id,m.name),cabedal:complete?Number(m.cabedalCost):null,total:complete?Number(m.totalCost):null,complete,usesPalmilha:m.usesPalmilha!==false,alert:complete?"":"Ficha local com custos incompletos."};
+    return{
+      ...catalog,
+      ref:localModelRef(m),model:m.name,line:m.line||catalog.line||modelLine(m.id,m.name),
+      cabedal:complete?Number(m.cabedalCost):(catalog.cabedal??null),
+      solado:catalog.solado??null,palmilha:catalog.palmilha??null,
+      total:complete?Number(m.totalCost):(catalog.total??null),
+      complete:complete||catalog.complete===true,usesPalmilha:m.usesPalmilha!==false,
+      alert:complete?"":(catalog.alert||"Ficha local com custos incompletos.")
+    };
   };
   const sheetForRef=ref=>{const local=localSheet(ref);return local?.complete?local:(CATALOG[String(ref)]||local||null)};
   const allRefSheets=()=>{
@@ -1078,7 +1106,7 @@ if("serviceWorker" in navigator)navigator.serviceWorker.register("sw.js").catch(
         if(qty>current){showToast(`Saldo insuficiente: há ${stockFmt(current)} pares neste item.`);return}
       }
       data.stockLedger.push({id:uid("stk"),date,direction,sector,ref,color,qty,note,createdAt:new Date().toISOString()});
-      save();renderStock();showToast("Movimento de estoque salvo.");
+      save();renderStock();showToast("Movimento registrado. Aguardando confirmação online.");
     };
 
     document.querySelectorAll("[data-stock-delete]").forEach(btn=>btn.onclick=()=>{
@@ -1214,9 +1242,9 @@ if("serviceWorker" in navigator)navigator.serviceWorker.register("sw.js").catch(
       const payload={date,category,description,supplier,amount:Math.round(amount*100)/100,method,status,note,updatedAt:new Date().toISOString()};
       if(editingExpenseId){
         const item=data.factoryExpenses.find(x=>x.id===editingExpenseId);if(item)Object.assign(item,payload);
-        editingExpenseId=null;showToast("Gasto atualizado.");
+        editingExpenseId=null;showToast("Alteração registrada. Aguardando confirmação online.");
       }else{
-        data.factoryExpenses.push({id:uid("gasto"),...payload,createdAt:new Date().toISOString()});showToast("Gasto adicionado.");
+        data.factoryExpenses.push({id:uid("gasto"),...payload,createdAt:new Date().toISOString()});showToast("Gasto registrado. Aguardando confirmação online.");
       }
       expenseMonth=monthKey(date);save();renderExpenses();
     };
@@ -1263,227 +1291,37 @@ if("serviceWorker" in navigator)navigator.serviceWorker.register("sw.js").catch(
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-<script id="remote-sync-v1">
+<script id="remote-sync-v2">
 (function(){
   "use strict";
-  const SUPABASE_URL="https://yvrldummgbjymlflvjsz.supabase.co";
-  const SUPABASE_KEY="sb_publishable_G2I9_xig0lJCPYje-D9NrQ_P77Pkyb7";
-  const WORKSPACE_ID="3ab84382-193b-4e69-8d1d-4e02847cef8f";
-  const ACTIVATE_URL=SUPABASE_URL+"/functions/v1/activate-owner";
-  const PENDING_KEY="acompanhar_producao_remote_pending_v1";
-  const sb=window.supabase.createClient(SUPABASE_URL,SUPABASE_KEY,{
-    auth:{persistSession:true,autoRefreshToken:true,detectSessionInUrl:true}
-  });
-
-  let remoteRevision=0;
-  let saveTimer=null;
-  let saving=false;
-  let applyingRemote=false;
-  let realtimeChannel=null;
-
-  const authRoot=document.getElementById("remote-auth");
-  const authMsg=document.getElementById("remote-auth-msg");
-  const loginForm=document.getElementById("remote-login-form");
-  const activateForm=document.getElementById("remote-activate-form");
-  const firstAccess=document.getElementById("remote-first-access");
-
-  function setStatus(text){
-    const el=document.getElementById("header-status");
-    if(el)el.textContent=text;
-  }
-  function authMessage(text,error=false){
-    authMsg.textContent=text||"";
-    authMsg.classList.toggle("error",!!error);
-  }
-  function unlock(){
-    document.body.classList.remove("remote-lock");
-    authRoot.hidden=true;
-  }
-  function lock(){
-    document.body.classList.add("remote-lock");
-    authRoot.hidden=false;
-  }
-  function applyRemote(row,announce=false){
-    if(!row||!row.data)return;
-    applyingRemote=true;
-    remoteRevision=Number(row.revision||0);
-    localStorage.setItem(STORAGE_KEY,JSON.stringify(row.data));
-    data=loadData();
-    applyingRemote=false;
-    try{render()}catch(_){}
-    setStatus("Base online · sincronizada");
-    localStorage.removeItem(PENDING_KEY);
-    if(announce)showToast("Dados atualizados pela base online.");
-  }
-  async function fetchRemoteState(){
-    const {data:row,error}=await sb.from("app_state")
-      .select("data,revision,updated_at")
-      .eq("workspace_id",WORKSPACE_ID)
-      .single();
-    if(error)throw error;
-    return row;
-  }
-  async function loadRemoteState(){
-    setStatus("Carregando base online…");
-    const row=await fetchRemoteState();
-    applyRemote(row,false);
-    unlock();
-    subscribeRealtime();
-    const pending=localStorage.getItem(PENDING_KEY);
-    if(pending==="1"){
-      setStatus("Alteração local pendente");
-    }
-  }
-  function subscribeRealtime(){
-    if(realtimeChannel)return;
-    realtimeChannel=sb.channel("fiori-belle-producao-state")
-      .on("postgres_changes",{
-        event:"UPDATE",schema:"public",table:"app_state",
-        filter:"workspace_id=eq."+WORKSPACE_ID
-      },payload=>{
-        const row=payload.new;
-        if(!row)return;
-        const rev=Number(row.revision||0);
-        if(rev>remoteRevision){
-          if(saving)return;
-          applyRemote(row,true);
-        }
-      })
-      .subscribe();
-  }
-
-  async function flushRemoteSave(){
-    if(applyingRemote||saving)return;
-    const {data:{session}}=await sb.auth.getSession();
-    if(!session)return;
-    saving=true;
-    setStatus("Sincronizando…");
-    const snapshot=clone(data);
-    try{
-      const {data:result,error}=await sb.rpc("save_app_state",{
-        p_workspace_id:WORKSPACE_ID,
-        p_data:snapshot,
-        p_expected_revision:remoteRevision
-      });
-      if(error)throw error;
-      const row=Array.isArray(result)?result[0]:result;
-      if(row?.new_revision!=null)remoteRevision=Number(row.new_revision);
-      localStorage.removeItem(PENDING_KEY);
-      setStatus("Base online · sincronizada");
-    }catch(err){
-      const msg=String(err?.message||err||"");
-      if(msg.toLowerCase().includes("revision conflict")){
-        try{
-          const latest=await fetchRemoteState();
-          applyRemote(latest,false);
-          showToast("A base mudou em outro aparelho. Recarreguei os dados online; refaça a última alteração.");
-        }catch(_){
-          setStatus("Erro de sincronização");
-          showToast("Não foi possível sincronizar agora.");
-        }
-      }else{
-        localStorage.setItem(PENDING_KEY,"1");
-        setStatus(navigator.onLine?"Erro de sincronização":"Sem internet · pendente");
-        showToast("Alteração salva neste aparelho e pendente de sincronização.");
-      }
-    }finally{
-      saving=false;
-    }
-  }
-
+  const SUPABASE_URL="https://yvrldummgbjymlflvjsz.supabase.co",SUPABASE_KEY="sb_publishable_G2I9_xig0lJCPYje-D9NrQ_P77Pkyb7",WORKSPACE_ID="3ab84382-193b-4e69-8d1d-4e02847cef8f",ACTIVATE_URL=SUPABASE_URL+"/functions/v1/activate-owner";
+  const PENDING_KEY="acompanhar_producao_remote_pending_v2",LEGACY_PENDING_KEY="acompanhar_producao_remote_pending_v1",CONFLICT_KEY="acompanhar_producao_remote_conflict_v1";
+  const sb=window.supabase.createClient(SUPABASE_URL,SUPABASE_KEY,{auth:{persistSession:true,autoRefreshToken:true,detectSessionInUrl:true}});
+  let remoteRevision=0,saveTimer=null,flushPromise=null,applyingRemote=false,realtimeChannel=null,syncConflict=false;
+  const authRoot=document.getElementById("remote-auth"),authMsg=document.getElementById("remote-auth-msg"),loginForm=document.getElementById("remote-login-form"),activateForm=document.getElementById("remote-activate-form"),firstAccess=document.getElementById("remote-first-access");
+  const setStatus=text=>{const el=document.getElementById("header-status");if(el)el.textContent=text};
+  const authMessage=(text,error=false)=>{authMsg.textContent=text||"";authMsg.classList.toggle("error",!!error)};
+  const unlock=()=>{document.body.classList.remove("remote-lock");authRoot.hidden=true},lock=()=>{document.body.classList.add("remote-lock");authRoot.hidden=false};
+  function readPending(){try{return JSON.parse(localStorage.getItem(PENDING_KEY)||"null")}catch(_){return null}}
+  function writePending(v){if(v)localStorage.setItem(PENDING_KEY,JSON.stringify(v));else localStorage.removeItem(PENDING_KEY)}
+  const hasPending=()=>!!readPending(),deepEqual=(a,b)=>{try{return JSON.stringify(a)===JSON.stringify(b)}catch(_){return false}};
+  function setConflict(localPending,remoteRow,reason){syncConflict=true;localStorage.setItem(CONFLICT_KEY,JSON.stringify({detectedAt:new Date().toISOString(),reason:String(reason||"revision conflict"),local:localPending,remote:{revision:Number(remoteRow?.revision||0),updated_at:remoteRow?.updated_at||null,data:remoteRow?.data||null}}));setStatus("Conflito protegido · não altere até revisar");showModal(`<h2 id="modal-title">Conflito protegido</h2><p>Há uma alteração deste aparelho e outra versão mais nova na base online.</p><p><strong>Nenhum dos dois lados foi apagado.</strong> Não faça novos lançamentos neste aparelho até revisar o conflito.</p><button class="btn primary full" data-modal-close>Entendi</button>`)}
+  function applyRemote(row,announce=false){if(!row||!row.data||hasPending()||syncConflict)return;applyingRemote=true;remoteRevision=Number(row.revision||0);localStorage.setItem(STORAGE_KEY,JSON.stringify(row.data));data=loadData();applyingRemote=false;try{render()}catch(_){}setStatus("Base online · sincronizada");if(announce)showToast("Dados atualizados pela base online.")}
+  async function fetchRemoteState(){const {data:row,error}=await sb.from("app_state").select("data,revision,updated_at").eq("workspace_id",WORKSPACE_ID).single();if(error)throw error;return row}
+  function scheduleFlush(delay=180){clearTimeout(saveTimer);saveTimer=setTimeout(()=>flushRemoteSave(),delay)}
+  async function restorePendingOrRemote(row){remoteRevision=Number(row.revision||0);const pending=readPending();if(!pending){applyRemote(row);return}if(deepEqual(pending.data,row.data)){writePending(null);localStorage.removeItem(CONFLICT_KEY);syncConflict=false;applyRemote(row);return}if(Number(pending.baseRevision)===remoteRevision){applyingRemote=true;localStorage.setItem(STORAGE_KEY,JSON.stringify(pending.data));data=loadData();applyingRemote=false;try{render()}catch(_){}setStatus("Alteração pendente · sincronizando…");scheduleFlush(30);return}setConflict(pending,row,"base changed while local change was pending")}
+  async function loadRemoteState(){setStatus("Carregando base online…");const row=await fetchRemoteState();await restorePendingOrRemote(row);unlock();subscribeRealtime()}
+  function subscribeRealtime(){if(realtimeChannel)return;realtimeChannel=sb.channel("fiori-belle-producao-state").on("postgres_changes",{event:"UPDATE",schema:"public",table:"app_state",filter:"workspace_id=eq."+WORKSPACE_ID},payload=>{const row=payload.new;if(!row)return;if(hasPending()||flushPromise||syncConflict){setStatus("Sincronizando · atualização remota aguardando");return}if(Number(row.revision||0)>remoteRevision)applyRemote(row,true)}).subscribe()}
+  async function flushRemoteSave(){if(flushPromise||syncConflict)return flushPromise;flushPromise=(async()=>{while(true){const pending=readPending();if(!pending)break;const {data:{session}}=await sb.auth.getSession();if(!session){setStatus("Entre para sincronizar");break}setStatus("Sincronizando…");const sentVersion=Number(pending.localVersion||1),sentData=clone(pending.data);const {data:result,error}=await sb.rpc("save_app_state",{p_workspace_id:WORKSPACE_ID,p_data:sentData,p_expected_revision:remoteRevision});if(error){const msg=String(error.message||error||"");if(msg.toLowerCase().includes("revision conflict")){const latest=await fetchRemoteState();setConflict(readPending()||pending,latest,msg)}else{setStatus(navigator.onLine?"Erro de sincronização · pendente":"Sem internet · pendente");showToast("Alteração preservada neste aparelho e pendente de sincronização.")}break}const row=Array.isArray(result)?result[0]:result;remoteRevision=Number(row?.new_revision||remoteRevision+1);const current=readPending();if(!current||Number(current.localVersion||0)===sentVersion){writePending(null);localStorage.removeItem(CONFLICT_KEY);setStatus("Base online · confirmada");showToast("Alterações confirmadas na base online.");break}current.baseRevision=remoteRevision;writePending(current)}})().finally(()=>{flushPromise=null});return flushPromise}
   const originalSave=save;
-  save=function(){
-    originalSave();
-    if(applyingRemote)return;
-    localStorage.setItem(PENDING_KEY,"1");
-    setStatus("Sincronizando…");
-    clearTimeout(saveTimer);
-    saveTimer=setTimeout(flushRemoteSave,220);
-  };
-
-  window.addEventListener("online",()=>{
-    if(localStorage.getItem(PENDING_KEY)==="1")flushRemoteSave();
-  });
-  window.addEventListener("focus",async()=>{
-    const {data:{session}}=await sb.auth.getSession();
-    if(!session)return;
-    if(localStorage.getItem(PENDING_KEY)==="1"){flushRemoteSave();return}
-    try{
-      const row=await fetchRemoteState();
-      if(Number(row.revision||0)>remoteRevision)applyRemote(row,true);
-    }catch(_){}
-  });
-
-  firstAccess.onclick=()=>{
-    activateForm.hidden=!activateForm.hidden;
-    authMessage(activateForm.hidden?"":"Use o código de ativação informado pelo administrador.");
-  };
-
-  loginForm.onsubmit=async e=>{
-    e.preventDefault();
-    const email=document.getElementById("remote-email").value.trim();
-    const password=document.getElementById("remote-password").value;
-    authMessage("Entrando…");
-    const {error}=await sb.auth.signInWithPassword({email,password});
-    if(error){authMessage("E-mail ou senha inválidos.",true);return}
-    try{
-      await loadRemoteState();
-      authMessage("");
-    }catch(err){
-      await sb.auth.signOut();
-      lock();
-      authMessage("Esta conta ainda não tem acesso à base Fiori Belle.",true);
-    }
-  };
-
-  activateForm.onsubmit=async e=>{
-    e.preventDefault();
-    const email=document.getElementById("remote-email").value.trim();
-    const password=document.getElementById("remote-password").value;
-    const activationCode=document.getElementById("remote-activation-code").value.trim();
-    if(!email||password.length<8){
-      authMessage("Preencha o e-mail e use uma senha com pelo menos 8 caracteres.",true);return;
-    }
-    authMessage("Criando acesso…");
-    try{
-      const res=await fetch(ACTIVATE_URL,{
-        method:"POST",
-        headers:{"Content-Type":"application/json","apikey":SUPABASE_KEY},
-        body:JSON.stringify({email,password,activationCode})
-      });
-      const body=await res.json().catch(()=>({}));
-      if(!res.ok)throw new Error(body.error||"Não foi possível criar o acesso.");
-      const {error}=await sb.auth.signInWithPassword({email,password});
-      if(error)throw error;
-      await loadRemoteState();
-      authMessage("");
-      showToast("Acesso criado. Base online conectada.");
-    }catch(err){
-      authMessage(String(err?.message||"Não foi possível criar o acesso."),true);
-    }
-  };
-
-  async function start(){
-    lock();
-    const {data:{session}}=await sb.auth.getSession();
-    if(!session){
-      setStatus("Entre para acessar a base online");
-      return;
-    }
-    try{
-      await loadRemoteState();
-    }catch(err){
-      await sb.auth.signOut();
-      lock();
-      authMessage("Sua sessão não tem acesso à base Fiori Belle.",true);
-    }
-  }
-
-  window.fioriOnline={
-    signOut:async()=>{await sb.auth.signOut();location.reload()},
-    refresh:async()=>{const row=await fetchRemoteState();applyRemote(row,true)}
-  };
-  start();
+  save=function(){originalSave();if(applyingRemote)return;const current=readPending();writePending({data:clone(data),baseRevision:current?.baseRevision??remoteRevision,localVersion:Number(current?.localVersion||0)+1,savedAt:new Date().toISOString()});if(syncConflict){setStatus("Conflito protegido · alteração preservada localmente");return}setStatus("Aguardando confirmação online…");scheduleFlush()};
+  window.addEventListener("online",()=>{if(hasPending()&&!syncConflict)scheduleFlush(20)});
+  window.addEventListener("focus",async()=>{const {data:{session}}=await sb.auth.getSession();if(!session)return;if(hasPending()){if(!syncConflict)scheduleFlush(20);return}try{const row=await fetchRemoteState();if(Number(row.revision||0)>remoteRevision)applyRemote(row,true)}catch(_){}});
+  firstAccess.onclick=()=>{activateForm.hidden=!activateForm.hidden;authMessage(activateForm.hidden?"":"Use o código de ativação informado pelo administrador.")};
+  loginForm.onsubmit=async e=>{e.preventDefault();const email=document.getElementById("remote-email").value.trim(),password=document.getElementById("remote-password").value;authMessage("Entrando…");const {error}=await sb.auth.signInWithPassword({email,password});if(error){authMessage("E-mail ou senha inválidos.",true);return}try{await loadRemoteState();authMessage("")}catch(err){await sb.auth.signOut();lock();authMessage("Esta conta ainda não tem acesso à base Fiori Belle.",true)}};
+  activateForm.onsubmit=async e=>{e.preventDefault();const email=document.getElementById("remote-email").value.trim(),password=document.getElementById("remote-password").value,activationCode=document.getElementById("remote-activation-code").value.trim();if(!email||password.length<8){authMessage("Preencha o e-mail e use uma senha com pelo menos 8 caracteres.",true);return}authMessage("Criando acesso…");try{const res=await fetch(ACTIVATE_URL,{method:"POST",headers:{"Content-Type":"application/json","apikey":SUPABASE_KEY},body:JSON.stringify({email,password,activationCode})});const body=await res.json().catch(()=>({}));if(!res.ok)throw new Error(body.error||"Não foi possível criar o acesso.");const {error}=await sb.auth.signInWithPassword({email,password});if(error)throw error;await loadRemoteState();authMessage("");showToast("Acesso criado. Base online conectada.")}catch(err){authMessage(String(err?.message||"Não foi possível criar o acesso."),true)}};
+  async function start(){lock();if(localStorage.getItem(LEGACY_PENDING_KEY)==="1"&&!localStorage.getItem(PENDING_KEY))setStatus("Há uma pendência da versão anterior. Não altere dados até conferir.");if(localStorage.getItem(CONFLICT_KEY))syncConflict=true;const {data:{session}}=await sb.auth.getSession();if(!session){setStatus("Entre para acessar a base online");return}try{await loadRemoteState()}catch(err){await sb.auth.signOut();lock();authMessage("Sua sessão não tem acesso à base Fiori Belle.",true)}}
+  window.fioriOnline={onlineMode:true,signOut:async()=>{if(hasPending())throw new Error("Há alterações pendentes; aguarde a confirmação.");await sb.auth.signOut();location.reload()},refresh:async()=>{if(hasPending()||syncConflict)throw new Error("Há alteração pendente ou conflito protegido.");const row=await fetchRemoteState();applyRemote(row,true)},getConfirmedState:fetchRemoteState,hasPending,flush:flushRemoteSave,conflict:()=>syncConflict};start();
 })();
 </script>
 </body>
