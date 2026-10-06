@@ -118,8 +118,23 @@ footer{color:var(--soft);font-size:.78rem;text-align:center;padding:8px 0 24px}
 .stock-detail .calc strong{color:var(--ink)}
 @media(max-width:520px){.stock-grid{grid-template-columns:1fr}.stock-sector-card{padding:12px}}
 \n</style>
+
+<style id="remote-sync-style">
+.remote-lock .wrap{display:none}
+.remote-auth{min-height:100vh;display:grid;place-items:center;padding:20px;background:var(--bg,#f3f4f5);color:var(--ink,#18212e)}
+.remote-auth[hidden]{display:none}
+.remote-auth-card{width:min(100%,430px);background:var(--card,#fff);border:1px solid var(--line,#d9dde2);border-radius:16px;padding:22px;box-shadow:0 12px 38px rgba(0,0,0,.08)}
+.remote-auth-card h1{margin:0 0 6px;font-size:1.45rem}
+.remote-auth-card .sub{margin:0 0 18px}
+.remote-auth-card .field{margin-bottom:12px}
+.remote-auth-card .btn{width:100%}
+.remote-auth-extra{margin-top:12px;padding-top:12px;border-top:1px solid var(--line,#d9dde2)}
+.remote-auth-msg{font-size:.86rem;margin-top:10px;color:var(--soft,#65707d)}
+.remote-auth-msg.error{color:var(--danger,#b42318);font-weight:650}
+.remote-cloud-note{margin-top:12px;font-size:.8rem;color:var(--soft,#65707d);text-align:center}
+</style>
 </head>
-<body>
+<body class="remote-lock">
 <div class="wrap">
   <header>
     <h1>Acompanhar Produção</h1>
@@ -148,7 +163,7 @@ footer{color:var(--soft);font-size:.78rem;text-align:center;padding:8px 0 24px}
     <button class="btn" id="edit-goal" type="button">Editar meta</button>
     <button class="btn primary" id="share" type="button">Compartilhar resumo</button>
   </div>
-  <footer>Dados guardados somente neste aparelho. Faça backup regularmente.</footer>
+  <footer id="app-footer">Base online Fiori Belle · sincronização automática.</footer>
 </div>
 
 <div class="toast" id="toast" hidden role="status" aria-live="polite"></div>
@@ -1218,6 +1233,252 @@ if("serviceWorker" in navigator)navigator.serviceWorker.register("sw.js").catch(
     render();
   };
   document.querySelectorAll('nav [role=tab]').forEach(b=>b.onclick=()=>switchTab(b.dataset.tab));
+})();
+</script>
+
+<div class="remote-auth" id="remote-auth">
+  <div class="remote-auth-card">
+    <h1>Acompanhar Produção</h1>
+    <p class="sub">Base online da Fiori Belle</p>
+    <form id="remote-login-form">
+      <div class="field"><label for="remote-email">E-mail</label><input id="remote-email" type="email" autocomplete="username" required></div>
+      <div class="field"><label for="remote-password">Senha</label><input id="remote-password" type="password" autocomplete="current-password" minlength="8" required></div>
+      <button class="btn primary" type="submit">Entrar</button>
+    </form>
+    <div class="remote-auth-extra">
+      <button class="btn" type="button" id="remote-first-access">Primeiro acesso</button>
+      <form id="remote-activate-form" hidden style="margin-top:12px">
+        <div class="field"><label for="remote-activation-code">Código de ativação</label><input id="remote-activation-code" autocomplete="one-time-code"></div>
+        <button class="btn primary" type="submit">Criar meu acesso</button>
+      </form>
+    </div>
+    <div class="remote-auth-msg" id="remote-auth-msg"></div>
+    <div class="remote-cloud-note">Os dados ficam na base online e podem ser usados no iPhone, PC e Work.</div>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script id="remote-sync-v1">
+(function(){
+  "use strict";
+  const SUPABASE_URL="https://yvrldummgbjymlflvjsz.supabase.co";
+  const SUPABASE_KEY="sb_publishable_G2I9_xig0lJCPYje-D9NrQ_P77Pkyb7";
+  const WORKSPACE_ID="3ab84382-193b-4e69-8d1d-4e02847cef8f";
+  const ACTIVATE_URL=SUPABASE_URL+"/functions/v1/activate-owner";
+  const PENDING_KEY="acompanhar_producao_remote_pending_v1";
+  const sb=window.supabase.createClient(SUPABASE_URL,SUPABASE_KEY,{
+    auth:{persistSession:true,autoRefreshToken:true,detectSessionInUrl:true}
+  });
+
+  let remoteRevision=0;
+  let saveTimer=null;
+  let saving=false;
+  let applyingRemote=false;
+  let realtimeChannel=null;
+
+  const authRoot=document.getElementById("remote-auth");
+  const authMsg=document.getElementById("remote-auth-msg");
+  const loginForm=document.getElementById("remote-login-form");
+  const activateForm=document.getElementById("remote-activate-form");
+  const firstAccess=document.getElementById("remote-first-access");
+
+  function setStatus(text){
+    const el=document.getElementById("header-status");
+    if(el)el.textContent=text;
+  }
+  function authMessage(text,error=false){
+    authMsg.textContent=text||"";
+    authMsg.classList.toggle("error",!!error);
+  }
+  function unlock(){
+    document.body.classList.remove("remote-lock");
+    authRoot.hidden=true;
+  }
+  function lock(){
+    document.body.classList.add("remote-lock");
+    authRoot.hidden=false;
+  }
+  function applyRemote(row,announce=false){
+    if(!row||!row.data)return;
+    applyingRemote=true;
+    remoteRevision=Number(row.revision||0);
+    localStorage.setItem(STORAGE_KEY,JSON.stringify(row.data));
+    data=loadData();
+    applyingRemote=false;
+    try{render()}catch(_){}
+    setStatus("Base online · sincronizada");
+    localStorage.removeItem(PENDING_KEY);
+    if(announce)showToast("Dados atualizados pela base online.");
+  }
+  async function fetchRemoteState(){
+    const {data:row,error}=await sb.from("app_state")
+      .select("data,revision,updated_at")
+      .eq("workspace_id",WORKSPACE_ID)
+      .single();
+    if(error)throw error;
+    return row;
+  }
+  async function loadRemoteState(){
+    setStatus("Carregando base online…");
+    const row=await fetchRemoteState();
+    applyRemote(row,false);
+    unlock();
+    subscribeRealtime();
+    const pending=localStorage.getItem(PENDING_KEY);
+    if(pending==="1"){
+      setStatus("Alteração local pendente");
+    }
+  }
+  function subscribeRealtime(){
+    if(realtimeChannel)return;
+    realtimeChannel=sb.channel("fiori-belle-producao-state")
+      .on("postgres_changes",{
+        event:"UPDATE",schema:"public",table:"app_state",
+        filter:"workspace_id=eq."+WORKSPACE_ID
+      },payload=>{
+        const row=payload.new;
+        if(!row)return;
+        const rev=Number(row.revision||0);
+        if(rev>remoteRevision){
+          if(saving)return;
+          applyRemote(row,true);
+        }
+      })
+      .subscribe();
+  }
+
+  async function flushRemoteSave(){
+    if(applyingRemote||saving)return;
+    const {data:{session}}=await sb.auth.getSession();
+    if(!session)return;
+    saving=true;
+    setStatus("Sincronizando…");
+    const snapshot=clone(data);
+    try{
+      const {data:result,error}=await sb.rpc("save_app_state",{
+        p_workspace_id:WORKSPACE_ID,
+        p_data:snapshot,
+        p_expected_revision:remoteRevision
+      });
+      if(error)throw error;
+      const row=Array.isArray(result)?result[0]:result;
+      if(row?.new_revision!=null)remoteRevision=Number(row.new_revision);
+      localStorage.removeItem(PENDING_KEY);
+      setStatus("Base online · sincronizada");
+    }catch(err){
+      const msg=String(err?.message||err||"");
+      if(msg.toLowerCase().includes("revision conflict")){
+        try{
+          const latest=await fetchRemoteState();
+          applyRemote(latest,false);
+          showToast("A base mudou em outro aparelho. Recarreguei os dados online; refaça a última alteração.");
+        }catch(_){
+          setStatus("Erro de sincronização");
+          showToast("Não foi possível sincronizar agora.");
+        }
+      }else{
+        localStorage.setItem(PENDING_KEY,"1");
+        setStatus(navigator.onLine?"Erro de sincronização":"Sem internet · pendente");
+        showToast("Alteração salva neste aparelho e pendente de sincronização.");
+      }
+    }finally{
+      saving=false;
+    }
+  }
+
+  const originalSave=save;
+  save=function(){
+    originalSave();
+    if(applyingRemote)return;
+    localStorage.setItem(PENDING_KEY,"1");
+    setStatus("Sincronizando…");
+    clearTimeout(saveTimer);
+    saveTimer=setTimeout(flushRemoteSave,220);
+  };
+
+  window.addEventListener("online",()=>{
+    if(localStorage.getItem(PENDING_KEY)==="1")flushRemoteSave();
+  });
+  window.addEventListener("focus",async()=>{
+    const {data:{session}}=await sb.auth.getSession();
+    if(!session)return;
+    if(localStorage.getItem(PENDING_KEY)==="1"){flushRemoteSave();return}
+    try{
+      const row=await fetchRemoteState();
+      if(Number(row.revision||0)>remoteRevision)applyRemote(row,true);
+    }catch(_){}
+  });
+
+  firstAccess.onclick=()=>{
+    activateForm.hidden=!activateForm.hidden;
+    authMessage(activateForm.hidden?"":"Use o código de ativação informado pelo administrador.");
+  };
+
+  loginForm.onsubmit=async e=>{
+    e.preventDefault();
+    const email=document.getElementById("remote-email").value.trim();
+    const password=document.getElementById("remote-password").value;
+    authMessage("Entrando…");
+    const {error}=await sb.auth.signInWithPassword({email,password});
+    if(error){authMessage("E-mail ou senha inválidos.",true);return}
+    try{
+      await loadRemoteState();
+      authMessage("");
+    }catch(err){
+      await sb.auth.signOut();
+      lock();
+      authMessage("Esta conta ainda não tem acesso à base Fiori Belle.",true);
+    }
+  };
+
+  activateForm.onsubmit=async e=>{
+    e.preventDefault();
+    const email=document.getElementById("remote-email").value.trim();
+    const password=document.getElementById("remote-password").value;
+    const activationCode=document.getElementById("remote-activation-code").value.trim();
+    if(!email||password.length<8){
+      authMessage("Preencha o e-mail e use uma senha com pelo menos 8 caracteres.",true);return;
+    }
+    authMessage("Criando acesso…");
+    try{
+      const res=await fetch(ACTIVATE_URL,{
+        method:"POST",
+        headers:{"Content-Type":"application/json","apikey":SUPABASE_KEY},
+        body:JSON.stringify({email,password,activationCode})
+      });
+      const body=await res.json().catch(()=>({}));
+      if(!res.ok)throw new Error(body.error||"Não foi possível criar o acesso.");
+      const {error}=await sb.auth.signInWithPassword({email,password});
+      if(error)throw error;
+      await loadRemoteState();
+      authMessage("");
+      showToast("Acesso criado. Base online conectada.");
+    }catch(err){
+      authMessage(String(err?.message||"Não foi possível criar o acesso."),true);
+    }
+  };
+
+  async function start(){
+    lock();
+    const {data:{session}}=await sb.auth.getSession();
+    if(!session){
+      setStatus("Entre para acessar a base online");
+      return;
+    }
+    try{
+      await loadRemoteState();
+    }catch(err){
+      await sb.auth.signOut();
+      lock();
+      authMessage("Sua sessão não tem acesso à base Fiori Belle.",true);
+    }
+  }
+
+  window.fioriOnline={
+    signOut:async()=>{await sb.auth.signOut();location.reload()},
+    refresh:async()=>{const row=await fetchRemoteState();applyRemote(row,true)}
+  };
+  start();
 })();
 </script>
 </body>
