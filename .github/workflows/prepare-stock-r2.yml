@@ -1,0 +1,36 @@
+name: Prepare stock validation r2
+on:
+  push:
+    branches: ['fix/stock-validation-r2-20261006']
+    paths:
+      - 'tools/repair_stock_r2.py'
+      - 'inventory-guard.js'
+      - 'tests/inventory.test.cjs'
+      - '.github/workflows/prepare-stock-r2.yml'
+permissions:
+  contents: write
+concurrency:
+  group: prepare-stock-r2
+  cancel-in-progress: false
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+      - name: Apply checked patch and run isolated tests
+        run: |
+          if [ ! -f tools/repair_stock_r2.py ] || [ ! -f inventory-guard.js ] || [ ! -f tests/inventory.test.cjs ]; then
+            echo 'Waiting for all reviewed repair inputs.'
+            exit 0
+          fi
+          python3 tools/repair_stock_r2.py
+          node --test tests/inventory.test.cjs
+          git add index.html sw.js
+          if git diff --cached --quiet; then exit 0; fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'Aplicar correção de estoque r2 após testes isolados'
+          git push origin HEAD:fix/stock-validation-r2-20261006
