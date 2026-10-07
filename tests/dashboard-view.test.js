@@ -137,12 +137,6 @@ test('keeps sync status in sticky chrome, including pending and conflict message
   assert.match(html,/Conflito protegido · não altere até revisar/);
   assert.match(html,/Erro de sincronização · pendente/);
 });
-test('changed inline code parses; inherited Sales parse failure is explicitly isolated',()=>{
-  const invalid=[];
-  for(const script of scripts){try{new vm.Script(script[2])}catch(e){invalid.push(script[2])}}
-  assert.ok(invalid.length<=1,'Only the known, untouched Sales module may have a parse failure');
-  for(const source of invalid){
-    assert.match(source,/const moneyCents=c=>Number\(c\|\|0\)\/100;\\n/);
-    assert.doesNotMatch(source,/function renderWeek/);
-  }
+test('all inline scripts parse, including the Sales module',()=>{
+  for(const script of scripts)assert.doesNotThrow(()=>new vm.Script(script[2]));
 });

@@ -1,5 +1,5 @@
 "use strict";
-const CACHE="acompanhar-producao-shell-v24";
+const CACHE="acompanhar-producao-shell-v25";
 const SHELL=["./","./index.html","./manifest.webmanifest","./inventory-guard.js","./dashboard-view.js"];
 
 self.addEventListener("install",event=>{
