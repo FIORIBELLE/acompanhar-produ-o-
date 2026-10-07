@@ -172,7 +172,8 @@ footer{color:var(--soft);font-size:.78rem;text-align:center;padding:8px 0 24px}
   <nav role="tablist" aria-label="Navegação principal">
     <button role="tab" aria-selected="true" data-tab="week">Início</button>
     <button role="tab" aria-selected="false" data-tab="stock">Estoque</button>
-    <button role="tab" aria-selected="false" data-tab="expenses">Gastos</button>\n    <button role="tab" aria-selected="false" data-tab="sales">Pedidos</button>
+    <button role="tab" aria-selected="false" data-tab="expenses">Gastos</button>
+    <button role="tab" aria-selected="false" data-tab="sales">Pedidos</button>
     <button role="tab" aria-selected="false" data-tab="entry">Lançar</button>
     <button role="tab" aria-selected="false" data-tab="history">Histórico</button>
     <button role="tab" aria-selected="false" data-tab="settings">Ajustes</button>
@@ -182,7 +183,8 @@ footer{color:var(--soft);font-size:.78rem;text-align:center;padding:8px 0 24px}
   <main>
     <section id="tab-week"></section>
     <section id="tab-stock" hidden></section>
-    <section id="tab-expenses" hidden></section>\n    <section id="tab-sales" hidden></section>
+    <section id="tab-expenses" hidden></section>
+    <section id="tab-sales" hidden></section>
     <section id="tab-entry" hidden></section>
     <section id="tab-history" hidden></section>
     <section id="tab-settings" hidden></section>
@@ -1284,7 +1286,8 @@ if("serviceWorker" in navigator)navigator.serviceWorker.register("sw.js").catch(
 (function salesControlBootstrap(){
   if(!data.salesControl||typeof data.salesControl!=="object")data.salesControl={version:1,clients:[],orders:[],payments:[],createdAt:new Date().toISOString()};
   for(const k of ["clients","orders","payments"])if(!Array.isArray(data.salesControl[k]))data.salesControl[k]=[];
-  const moneyCents=c=>Number(c||0)/100;\n  const millsMoney=m=>(Number(m||0)/1000).toLocaleString("pt-BR",{style:"currency",currency:"BRL",minimumFractionDigits:2,maximumFractionDigits:3});
+  const moneyCents=c=>Number(c||0)/100;
+  const millsMoney=m=>(Number(m||0)/1000).toLocaleString("pt-BR",{style:"currency",currency:"BRL",minimumFractionDigits:2,maximumFractionDigits:3});
   const salesMoney=c=>moneyCents(c).toLocaleString("pt-BR",{style:"currency",currency:"BRL"});
   const parseSalesMoney=v=>{const raw=String(v??"").trim().replace(/\s/g,"");if(!raw)return NaN;const n=Number(raw.includes(",")?raw.replace(/\./g,"").replace(",","."):raw);return Number.isFinite(n)?Math.round(n*100):NaN};
   const clientById=id=>data.salesControl.clients.find(x=>x.id===id);
