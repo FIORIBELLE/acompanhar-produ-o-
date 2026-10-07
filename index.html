@@ -117,7 +117,34 @@ footer{color:var(--soft);font-size:.78rem;text-align:center;padding:8px 0 24px}
 .stock-warning-inline{color:var(--live);font-weight:700}
 .stock-detail .calc strong{color:var(--ink)}
 @media(max-width:520px){.stock-grid{grid-template-columns:1fr}.stock-sector-card{padding:12px}}
-\n</style>
+
+/* SIMPLE_DASHBOARD_V1: keep sync feedback visible while reading any tab. */
+.app-chrome{position:sticky;top:env(safe-area-inset-top,0px);z-index:8;background:var(--bg);padding-top:1px;padding-bottom:1px}
+.app-chrome nav{position:static;margin-bottom:14px}
+.app-chrome header{align-items:center}
+.app-chrome .status{overflow-wrap:anywhere}
+.dashboard-heading{margin:0 0 12px;color:var(--soft);font-size:.85rem}
+.dashboard-count{font-size:2rem;font-weight:800;font-variant-numeric:tabular-nums;margin:10px 0 0}
+.dashboard-count small{font-size:1rem;font-weight:600}
+.dashboard-quantity{font-size:.85rem;color:var(--soft);margin-bottom:10px}
+.dashboard-model .name{display:block}
+.dashboard-model .model-description{display:block;font-weight:400;font-size:.85rem;color:var(--soft);margin-top:2px}
+.dashboard-model .value{font-size:1rem}
+.mounting-card{border:1px solid var(--line);border-radius:8px;padding:12px;margin-top:12px}
+.mounting-card h3{font-size:1rem;margin:0}
+.mounting-card .mounting-total{font-size:.8rem;color:var(--soft);margin:4px 0 8px}
+.dashboard-details>summary,.mounting-materials>summary{cursor:pointer;min-height:44px;align-content:center;font-weight:650}
+.dashboard-details>summary:focus-visible,.mounting-materials>summary:focus-visible{outline:3px solid var(--live);outline-offset:2px}
+.dashboard-details[open]>summary{margin-bottom:12px}
+.mounting-materials{border-top:1px solid var(--line);margin-top:10px;padding-top:3px;font-size:.85rem}
+.mounting-materials .row-top{flex-wrap:wrap}
+.dashboard-alert{border-color:var(--danger);color:var(--ink)}
+.dashboard-alert summary{cursor:pointer;margin-top:6px}
+.dashboard-alert ul{padding-left:20px;margin-bottom:0}
+.dashboard-details .block:last-child{margin-bottom:0}
+@media(max-width:400px){.app-chrome h1{font-size:1.2rem}.app-chrome .status{font-size:.73rem}.dashboard-model .row-top{align-items:flex-start}.dashboard-model .value{font-size:.9rem}.mounting-card{padding:10px}}
+
+</style>
 
 <style id="remote-sync-style">
 .remote-lock .wrap{display:none}
@@ -136,19 +163,21 @@ footer{color:var(--soft);font-size:.78rem;text-align:center;padding:8px 0 24px}
 </head>
 <body class="remote-lock">
 <div class="wrap">
+  <div class="app-chrome">
   <header>
     <h1>Acompanhar Produção</h1>
-    <div class="status"><span class="dot"></span><span id="header-status">Salvo neste iPhone</span></div>
+    <div class="status"><span class="dot"></span><span id="header-status" role="status" aria-live="polite">Conectando à base online…</span></div>
   </header>
 
   <nav role="tablist" aria-label="Navegação principal">
-    <button role="tab" aria-selected="true" data-tab="week">Semana</button>
+    <button role="tab" aria-selected="true" data-tab="week">Início</button>
     <button role="tab" aria-selected="false" data-tab="stock">Estoque</button>
     <button role="tab" aria-selected="false" data-tab="expenses">Gastos</button>\n    <button role="tab" aria-selected="false" data-tab="sales">Pedidos</button>
     <button role="tab" aria-selected="false" data-tab="entry">Lançar</button>
     <button role="tab" aria-selected="false" data-tab="history">Histórico</button>
     <button role="tab" aria-selected="false" data-tab="settings">Ajustes</button>
   </nav>
+  </div>
 
   <main>
     <section id="tab-week"></section>
@@ -173,6 +202,7 @@ footer{color:var(--soft);font-size:.78rem;text-align:center;padding:8px 0 24px}
 <input id="backup-file" type="file" accept="application/json,.json" hidden>
 
 <script src="inventory-guard.js"></script>
+<script src="dashboard-view.js"></script>
 <script>
 "use strict";
 const STORAGE_KEY="acompanhar_producao_v2";
@@ -425,41 +455,61 @@ function readyStockForWeek(){
   const items=[...byRef.values()].sort((a,b)=>a.ref.localeCompare(b.ref,"pt-BR",{numeric:true}));
   return{total:items.reduce((n,x)=>n+x.qty,0),items,issues:result.issues||[]};
 }
-function readyStockWeekMarkup(){
-  const ready=readyStockForWeek();
-  const rows=ready.items.map(item=>`<div class="row"><div class="row-top"><span class="name">Ref. ${esc(item.ref)}</span><span class="value">${fmt(item.qty)} pares</span></div><div class="votes">${item.colors.map(c=>`${esc(c.color)} ${fmt(c.qty)}`).join(" · ")}</div></div>`).join("");
-  return `<div class="block" id="week-ready-stock"><div class="row-top"><div><h2>Estoque pronto atual</h2><p class="sub" style="margin:2px 0 0">Saldo disponível agora na fábrica. Não entra na meta semanal.</p></div><button class="btn small" type="button" id="open-ready-stock">Ver estoque</button></div>
-    <div class="summary-grid"><div class="summary-stat"><strong>${fmt(ready.total)} pares</strong><span>produto pronto em estoque</span></div><div class="summary-stat"><strong>${ready.items.length}</strong><span>referências com saldo</span></div></div>
+function dashboardModelName(item){
+  return `<span class="name">Ref. ${esc(item.ref)}</span>${item.description?`<span class="model-description">${esc(item.description)}</span>`:""}`;
+}
+function readyStockWeekMarkup(ready=readyStockForWeek()){
+  const rows=ready.items.map(item=>`<div class="row dashboard-model"><div class="row-top"><div>${dashboardModelName(FioriDashboard.modelInfo(data,item.ref))}</div><span class="value">${fmt(item.qty)} pares</span></div><div class="votes">${FioriDashboard.unitsText(item.qty,data.settings)}</div><div class="votes">${item.colors.map(c=>`${esc(c.color)}: ${fmt(c.qty)} pares`).join(" · ")}</div></div>`).join("");
+  return `<div class="block" id="week-ready-stock"><div class="row-top"><h2>Pronto na fábrica</h2><button class="btn small" type="button" id="open-ready-stock">Ver estoque</button></div>
+    <div class="dashboard-count">${fmt(ready.total)} <small>pares</small></div><div class="dashboard-quantity">${FioriDashboard.unitsText(ready.total,data.settings)}</div>
+    <p class="sub">Saldo disponível agora. Separado da produção e da meta da semana.</p>
     ${rows||'<div class="empty">Nenhum produto pronto em estoque.</div>'}
-    ${ready.issues.length?`<div class="stock-warning">⚠ Existe divergência de estoque a revisar. O saldo acima usa os movimentos válidos atuais.</div>`:""}
   </div>`;
+}
+function mountingStockWeekMarkup(stock,mountings,readOnly,displayState=data){
+  const cards=FioriDashboard.mountingCards(displayState,stock,mountings);
+  return `<div class="block" id="week-mounting-stock"><h2>Cabedais nas montagens</h2><p class="sub">${readOnly?"Saldo no fim desta semana.":"Saldo registrado em cada montagem."} Cabedais ainda não são pares prontos.</p>
+    ${cards.map(mt=>`<article class="mounting-card" data-mounting-card="${esc(mt.id)}"><h3>${esc(mt.name)}</h3>
+      ${mt.total?`<div class="mounting-total">${fmt(mt.total)} pares de cabedal · ${FioriDashboard.unitsText(mt.total,data.settings)}</div>`:""}
+      ${mt.models.map(m=>`<div class="row dashboard-model"><div class="row-top"><div>${dashboardModelName(m)}</div><span class="value">${fmt(m.qty)} pares</span></div><div class="votes">${FioriDashboard.unitsText(m.qty,data.settings)}</div>${m.colors.length?`<div class="votes">${m.colors.map(c=>`${esc(FioriInventory.colorLabel(c.color))}: ${fmt(c.qty)} pares`).join(" · ")}</div>`:""}</div>`).join("")||'<div class="empty">Sem cabedais com saldo nesta montagem.</div>'}
+      <details class="mounting-materials"><summary>Ver materiais e capacidade</summary><p class="sub">Solados e palmilhas são compartilhados pelos modelos da mesma linha e cor. Linha 300 não usa palmilha.</p>
+        ${mt.lines.map(line=>`<div class="row"><strong>Linha ${esc(line.line)}</strong>${line.colors.map(c=>`<div class="votes">${c.sector==="solado"?"Solado":"Palmilha"} · ${esc(FioriInventory.colorLabel(c.color))}: ${fmt(c.qty)} pares</div>`).join("")}</div>`).join("")||'<div class="empty">Sem materiais com saldo nesta montagem.</div>'}
+        <div class="calc">Com os materiais e cores registrados, esta montagem pode produzir <strong>${fmt(possibleForMounting(mt.balance))} pares</strong> no total.</div>
+      </details></article>`).join("")||'<div class="empty">Cadastre uma montagem em Ajustes.</div>'}
+  </div>`;
+}
+function remainingWeekMarkup(w,s,readOnly,key,displayState=data){
+  const byModel={...s.byModel};
+  for(const id of Object.keys(w.modelGoals||{}))if(!Object.hasOwn(byModel,id))byModel[id]=(w.entries||[]).filter(e=>e.kind==="finished"&&e.modelId===id&&entryInWeek(e,key)&&(readOnly||e.date<=spDate())).reduce((total,e)=>total+(Number(e.qty)||0),0);
+  const plan=FioriDashboard.remainingPlan(displayState,w,byModel),remaining=Math.max(0,s.goal-s.done);
+  return `<div class="block" id="week-remaining"><h2>${readOnly?"Faltou produzir":"Falta produzir na semana"}</h2>
+    ${s.goal?`<div class="dashboard-count">${fmt(remaining)} <small>pares</small></div><div class="dashboard-quantity">${FioriDashboard.unitsText(remaining,data.settings)}</div><p class="sub">Meta salva: ${fmt(s.goal)} pares · produção da semana: ${fmt(s.done)} pares. O estoque pronto anterior não abate esta meta.</p>`:'<div class="notice">Meta semanal não definida. Defina a meta para calcular quanto falta produzir.</div>'}
+    ${plan.items.length?plan.items.filter(item=>item.remaining>0).map(item=>`<div class="row dashboard-model"><div class="row-top"><div>${dashboardModelName(item)}</div><span class="value">${fmt(item.remaining)} pares</span></div><div class="votes">${FioriDashboard.unitsText(item.remaining,data.settings)} · meta ${fmt(item.goal)} · produzidos ${fmt(item.done)}</div></div>`).join("")||'<p class="sub">As metas salvas por modelo foram atingidas.</p>':'<div class="notice">Plano por modelo não definido. Use “Editar meta” e “Metas por modelo” para informar as quantidades; sem esse plano, não é possível dizer quanto falta de cada modelo.</div>'}
+    ${plan.mismatch?`<div class="notice dashboard-alert">As metas por modelo somam ${fmt(plan.total)} pares, mas a meta semanal salva é ${fmt(s.goal)}. Revise o plano.</div>`:""}
+  </div>`;
+}
+function weekDetailsMarkup(w,s,models,mountings,displayState=data){
+  const goal=s.goal,remaining=Math.max(0,goal-s.done),perDay=s.work.remaining?remaining/s.work.remaining:0,maxComponent=Math.max(1,...Object.values(s.componentTotals));
+  return `<details class="block dashboard-details" id="week-details"><summary>Ver detalhes da semana</summary>
+    <div class="block"><h2>Produção e meta</h2>${goal?`<div class="meter"><div class="meter-top"><div class="meter-num">${fmt(s.done)}<small> / ${fmt(goal)}</small></div><div class="meter-cap">pares produzidos<br>${pct(s.rate)}</div></div><div class="meter-track"><div class="meter-fill" style="width:${barWidth(s.done,goal)}%"></div></div></div>`:'<p class="sub">Meta semanal não definida.</p>'}<div class="summary-grid"><div class="summary-stat"><strong>${fmt(s.possible)} pares</strong><span>capacidade atual das montagens</span></div><div class="summary-stat"><strong>${fmt(s.projection)} pares</strong><span>projeção semanal no ritmo atual</span></div></div></div>
+    <div class="block"><h2>Componentes disponíveis</h2><p class="sub">Saldos das montagens. Cabedais por modelo; palmilhas e solados compartilhados por linha.</p>${COMPONENTS.map(c=>{const value=s.componentTotals[c.id]||0;return `<div class="row"><div class="row-top"><span class="name">${esc(c.name)}</span><span class="value">${fmt(value)} pares</span></div><div class="bar secondary"><span style="width:${100*value/maxComponent}%"></span></div></div>`}).join("")}</div>
+    <div class="block"><h2>Ritmo da semana</h2><div class="row"><div class="row-top"><span class="name">Média diária</span><span class="value">${fmt(s.avg)} pares/dia</span></div><div class="votes">${fmt(s.done)} pares em ${s.work.elapsed} ${s.work.elapsed===1?"dia trabalhado":"dias trabalhados"}</div></div><div class="row"><div class="row-top"><span class="name">Dias de trabalho restantes</span><span class="value">${s.work.remaining}</span></div><div class="votes">Projeção de ${fmt(s.projection)} pares no ritmo atual.</div></div>${goal?`<div class="row"><div class="row-top"><span class="name">${s.work.remaining?"Quanto falta por dia":"Quanto faltou"}</span><span class="value">${fmt(s.work.remaining?perDay:remaining)} ${s.work.remaining?"pares/dia":"pares"}</span></div></div>`:""}</div>
+    <div class="block"><h2>Produção por montagem</h2><p class="sub">Pares prontos produzidos e valor a pagar nesta semana.</p>${mountings.map(mt=>{const value=s.byMounting[mt.id]||0;return `<div class="row"><div class="row-top"><span class="name">${esc(mt.name)}</span><span class="value">${fmt(value)} prontos</span></div><div class="votes">${money(mt.rate)} por par · valor a pagar ${money(value*(Number(mt.rate)||0))}</div></div>`}).join("")||'<div class="empty">Cadastre uma montagem em Ajustes.</div>'}</div>
+    <div class="block"><h2>Produção por modelo</h2><p class="sub">Pares prontos produzidos nesta semana.</p>${models.map(m=>{const value=s.byModel[m.id]||0,mg=Number(w.modelGoals[m.id])||0;return `<div class="row dashboard-model"><div class="row-top"><div>${dashboardModelName(FioriDashboard.modelInfo(displayState,m.id))}</div><span class="value">${fmt(value)} pares</span></div><div class="votes">${FioriDashboard.unitsText(value,data.settings)}${mg?` · meta ${fmt(mg)} · ${pct(100*value/mg)}`:""}</div>${mg?`<div class="bar secondary"><span style="width:${barWidth(value,mg)}%"></span></div>`:""}</div>`}).join("")||'<div class="empty">Cadastre um modelo em Ajustes.</div>'}</div>
+  </details>`;
 }
 function renderWeek(key=ui.viewWeek||currentWeekKey()){
   const readOnly=key!==currentWeekKey(),w=weekData(key),s=weekSummary(key),models=modelsForWeek(key),mountings=mountingsForWeek(key);
-  const goal=s.goal,remaining=Math.max(0,goal-s.done),perDay=s.work.remaining?remaining/s.work.remaining:0,maxComponent=Math.max(1,...Object.values(s.componentTotals));
-  const modelRows=models.map(m=>{
-    const value=s.byModel[m.id]||0,mg=Number(w.modelGoals[m.id])||0,stock=s.stock[m.id]||{},line=stock.line||modelLine(m.id,m.name),possible=Object.values(s.stockByMounting).reduce((sum,mt)=>sum+FioriInventory.possibleForModel(data,mt,m),0);
-    return `<div class="row"><div class="row-top"><span class="name">Modelo ${esc(m.name)}</span><span class="value">${fmt(value)} prontos</span></div><div class="votes">${fichasText(value)}${mg?` · meta ${fmt(mg)} · ${pct(100*value/mg)}`:""}</div>${mg?`<div class="bar secondary"><span style="width:${barWidth(value,mg)}%"></span></div>`:""}<div class="calc">Cabedal ${fmt(stock.cabedal)} · Linha ${esc(line)}: palmilhas ${fmt(stock.palmilha)} e solados ${fmt(stock.solado)} · pode montar agora ${fmt(possible)} pares (mesma montagem e cor)</div></div>`;
-  }).join("");
-  const mountingRows=mountings.map(mt=>{
-    const value=s.byMounting[mt.id]||0,amount=value*(Number(mt.rate)||0),stock=s.stockByMounting[mt.id]||{models:{},lines:{}},possible=possibleForMounting(stock);
-    return `<div class="row"><div class="row-top"><span class="name">${esc(mt.name)}</span><span class="value">${fmt(value)} prontos</span></div><div class="votes">${money(mt.rate)} por par · valor a pagar ${money(amount)}</div><div class="calc">Componentes disponíveis permitem produzir ${fmt(possible)} pares nesta montagem.</div></div>`;
-  }).join("");
+  const displayState=FioriDashboard.displayStateForWeek(data,w,readOnly);
+  const ready=readOnly?null:readyStockForWeek(),issues=ready?.issues||FioriInventory.ledger(data,{until:weekEnd(key)}).issues;
   document.getElementById("tab-week").innerHTML=`
     ${readOnly?`<div class="block readonly"><div><strong>Semana arquivada</strong><div class="sub" style="margin:2px 0 0">Somente leitura</div></div><button class="btn small" id="back-current">Voltar à atual</button></div>`:""}
-    <div class="block"><div class="sub">Semana de ${weekLabel(key)}</div>
-      ${goal?`<div class="meter"><div class="meter-top"><div class="meter-num">${fmt(s.done)}<small> / ${fmt(goal)}</small></div><div class="meter-cap">pares prontos<br>${pct(s.rate)}</div></div><div class="meter-track"><div class="meter-fill" style="width:${barWidth(s.done,goal)}%"></div></div></div>`:`<div class="notice">Defina a meta desta semana para calcular percentuais, ritmo e projeção.</div>`}
-      <div class="summary-grid"><div class="summary-stat"><strong>${fmt(s.possible)} pares</strong><span>possível produzir agora</span></div><div class="summary-stat"><strong>${fmt(s.projection)} pares</strong><span>projeção semanal</span></div></div>
-    </div>\n    ${readOnly?"":readyStockWeekMarkup()}\n    <div class="block"><h2>Componentes disponíveis</h2><p class="sub">Cabedais por modelo; palmilhas e solados compartilhados por linha.</p>
-      ${COMPONENTS.map(c=>{const value=s.componentTotals[c.id]||0,isGap=s.gargalo?.id===c.id;return `<div class="row ${isGap?"gargalo":""}"><div class="row-top"><span class="name">${esc(c.name)}${isGap?'<span class="tag">Gargalo</span>':""}</span><span class="value">${fmt(value)} pares</span></div><div class="bar${isGap?"":" secondary"}"><span style="width:${100*value/maxComponent}%"></span></div></div>`}).join("")}
-    </div>
-    <div class="block"><h2>Ritmo da semana</h2>
-      <div class="row"><div class="row-top"><span class="name">Média diária</span><span class="value">${fmt(s.avg)} pares/dia</span></div><div class="calc">${fmt(s.done)} ÷ ${s.work.elapsed} ${s.work.elapsed===1?"dia trabalhado":"dias trabalhados"} = ${fmt(s.avg)} pares/dia</div></div>
-      <div class="row"><div class="row-top"><span class="name">Dias de trabalho restantes</span><span class="value">${s.work.remaining}</span></div><div class="calc">No ritmo atual, a semana fecha em ${fmt(s.projection)} pares.</div></div>
-      ${goal?(s.work.remaining?`<div class="row"><div class="row-top"><span class="name">Quanto falta por dia</span><span class="value">${fmt(perDay)} pares/dia</span></div><div class="calc">${fmt(remaining)} ÷ ${s.work.remaining} ${s.work.remaining===1?"dia":"dias"} = ${fmt(perDay)} pares/dia</div></div>`:`<div class="row"><div class="row-top"><span class="name">Quanto faltou</span><span class="value">${fmt(remaining)} pares</span></div><div class="calc">Não restam dias de trabalho nesta semana.</div></div>`):""}
-    </div>
-    <div class="block"><h2>Produção por montagem</h2><p class="sub">Pares prontos e valor a pagar nesta semana.</p>${mountingRows||'<div class="empty">Cadastre ao menos uma montagem em Ajustes.</div>'}</div>
-    <div class="block"><h2>Produção por modelo</h2><p class="sub">Cabedal individual; palmilha e solado usados da linha do modelo.</p>${modelRows||'<div class="empty">Cadastre ao menos um modelo em Ajustes.</div>'}</div>`;
+    <p class="dashboard-heading">Semana de ${weekLabel(key)}</p>
+    ${issues.length?`<div class="notice dashboard-alert" role="alert"><strong>Há divergências de estoque a revisar.</strong> Os saldos exibidos não confirmam o estoque físico.<details><summary>Ver ${issues.length} ${issues.length===1?"divergência":"divergências"}</summary><ul>${issues.map(issue=>`<li>${esc(issue.message)}</li>`).join("")}</ul></details></div>`:""}
+    ${readOnly?"":readyStockWeekMarkup(ready)}
+    ${mountingStockWeekMarkup(s.stockByMounting,mountings,readOnly,displayState)}
+    ${remainingWeekMarkup(w,s,readOnly,key,displayState)}
+    ${weekDetailsMarkup(w,s,models,mountings,displayState)}`;
   if(readOnly)document.getElementById("back-current").onclick=()=>{ui.viewWeek=null;render();window.scrollTo({top:0,behavior:"smooth"})};
   const readyButton=document.getElementById("open-ready-stock");if(readyButton)readyButton.onclick=()=>{switchTab("stock");window.scrollTo({top:0,behavior:"smooth"})};
   document.getElementById("edit-goal").hidden=readOnly;
