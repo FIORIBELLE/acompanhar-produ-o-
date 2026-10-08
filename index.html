@@ -205,6 +205,7 @@ footer{color:var(--soft);font-size:.78rem;text-align:center;padding:8px 0 24px}
 
 <script src="inventory-guard.js"></script>
 <script src="dashboard-view.js"></script>
+<script src="sales-receipt.js"></script>
 <script>
 "use strict";
 const STORAGE_KEY="acompanhar_producao_v2";
@@ -1287,7 +1288,6 @@ if("serviceWorker" in navigator)navigator.serviceWorker.register("sw.js").catch(
   if(!data.salesControl||typeof data.salesControl!=="object")data.salesControl={version:1,clients:[],orders:[],payments:[],createdAt:new Date().toISOString()};
   for(const k of ["clients","orders","payments"])if(!Array.isArray(data.salesControl[k]))data.salesControl[k]=[];
   const moneyCents=c=>Number(c||0)/100;
-  const millsMoney=m=>(Number(m||0)/1000).toLocaleString("pt-BR",{style:"currency",currency:"BRL",minimumFractionDigits:2,maximumFractionDigits:3});
   const salesMoney=c=>moneyCents(c).toLocaleString("pt-BR",{style:"currency",currency:"BRL"});
   const parseSalesMoney=v=>{const raw=String(v??"").trim().replace(/\s/g,"");if(!raw)return NaN;const n=Number(raw.includes(",")?raw.replace(/\./g,"").replace(",","."):raw);return Number.isFinite(n)?Math.round(n*100):NaN};
   const clientById=id=>data.salesControl.clients.find(x=>x.id===id);
@@ -1298,13 +1298,64 @@ if("serviceWorker" in navigator)navigator.serviceWorker.register("sw.js").catch(
   const paymentCreditCents=p=>Math.max(0,Number(p.amountCents||0)-paymentAllocatedCents(p));
   const clientCreditCents=id=>data.salesControl.payments.filter(p=>p.clientId===id).reduce((n,p)=>n+paymentCreditCents(p),0);
   const orderStatus=o=>{const paid=orderPaidCents(o.id),total=Number(o.totalCents||0);return paid<=0?"Em aberto":paid>=total?"Pago":"Parcial"};
-  const receiptText=o=>{
-    const c=clientById(o.clientId),payments=data.salesControl.payments.filter(p=>(p.allocations||[]).some(a=>a.orderId===o.id)).sort((a,b)=>a.date.localeCompare(b.date));
-    const lines=["JR Calçados",`Cliente: ${c?.name||"—"}`,`Pedido: ${fmtDate(o.date)}`,"",...o.items.map(i=>`${i.ref} · ${i.qty} pares × ${millsMoney(itemPriceMills(i))} = ${salesMoney(Math.round(i.qty*itemPriceMills(i)/10))}`),"",`Total do pedido: ${salesMoney(o.totalCents)}`];
-    if(payments.length){lines.push("","Pagamentos:");for(const p of payments){const a=(p.allocations||[]).find(x=>x.orderId===o.id);lines.push(`${fmtDate(p.date)} · ${salesMoney(a.amountCents)}`)}}
-    lines.push("",`Total pago: ${salesMoney(orderPaidCents(o.id))}`,`Saldo: ${salesMoney(orderBalanceCents(o))}`);
-    return lines.join("\n");
-  };
+  function openReceipt(order){
+    let receipt;
+    try{receipt=FioriReceipt.build(order,data.salesControl.clients,data.salesControl.payments)}
+    catch(error){showToast("Não foi possível gerar o recibo: "+error.message);return}
+    showModal(`<h2 id="modal-title">Recibo JR Calçados</h2>
+      <p class="sub">Confira os dados antes de enviar. No celular, você também pode manter a imagem pressionada para salvá-la.</p>
+      <p id="sales-receipt-status" role="status" aria-live="polite">Preparando imagem…</p>
+      <img id="sales-receipt-image" alt="Prévia do recibo JR Calçados" hidden style="width:100%;height:auto;border:1px solid var(--line);margin-bottom:12px">
+      <div class="button-row" style="margin-bottom:12px">
+        <a class="btn primary" id="sales-receipt-download" hidden style="text-align:center;text-decoration:none">Baixar PNG</a>
+        <button class="btn" type="button" id="sales-receipt-share-image" hidden>Compartilhar PNG</button>
+      </div>
+      <details id="sales-receipt-text-details" open><summary>Recibo em texto</summary>
+        <textarea id="sales-receipt-text" readonly rows="14" aria-label="Texto do recibo" style="width:100%;margin:10px 0;white-space:pre-wrap"></textarea>
+        <div class="button-row"><button class="btn" type="button" id="sales-receipt-copy">Copiar texto</button><button class="btn" type="button" id="sales-receipt-share-text" hidden>Compartilhar texto</button></div>
+      </details>
+      <button class="btn full" type="button" data-modal-close style="margin-top:14px">Fechar</button>`);
+    const text=document.getElementById("sales-receipt-text"),status=document.getElementById("sales-receipt-status");
+    text.value=receipt.text;
+    const isCurrent=()=>document.getElementById("sales-receipt-text")===text&&!document.getElementById("modal").hidden;
+    const notifyReceipt=message=>{if(isCurrent())status.textContent=message};
+    const selectText=message=>{if(!isCurrent())return;document.getElementById("sales-receipt-text-details").open=true;text.focus();text.select();notifyReceipt(message)};
+    document.getElementById("sales-receipt-copy").onclick=async()=>{
+      try{if(!navigator.clipboard?.writeText)throw new Error("Clipboard unavailable");await navigator.clipboard.writeText(receipt.text);notifyReceipt("Recibo copiado.")}
+      catch(_){selectText("Selecione e copie o texto do recibo.")}
+    };
+    const shareTextButton=document.getElementById("sales-receipt-share-text");
+    shareTextButton.hidden=typeof navigator.share!=="function";
+    shareTextButton.onclick=async()=>{
+      if(shareTextButton.disabled)return;shareTextButton.disabled=true;
+      try{await navigator.share({title:"Recibo JR Calçados",text:receipt.text})}
+      catch(error){if(error.name!=="AbortError")selectText("Não foi possível compartilhar. O texto está disponível para copiar.")}
+      finally{shareTextButton.disabled=false}
+    };
+    try{
+      const canvas=FioriReceipt.draw(receipt,()=>document.createElement("canvas")),png=canvas.toDataURL("image/png");
+      if(!png.startsWith("data:image/png;base64,"))throw new Error("Imagem indisponível.");
+      const image=document.getElementById("sales-receipt-image"),download=document.getElementById("sales-receipt-download");
+      image.src=png;image.hidden=false;download.href=png;download.download=FioriReceipt.filename(receipt);download.hidden=false;
+      status.textContent="Imagem pronta. Baixe ou compartilhe o recibo.";
+      // Prepare the file before the next click, preserving iPhone's user activation for navigator.share.
+      if(typeof File==="function"&&typeof navigator.share==="function"&&typeof navigator.canShare==="function"){
+        try{
+          const bytes=Uint8Array.from(atob(png.split(",")[1]),char=>char.charCodeAt(0));
+          const file=new File([bytes],download.download,{type:"image/png"});
+          if(navigator.canShare({files:[file]})){
+            const shareImageButton=document.getElementById("sales-receipt-share-image");shareImageButton.hidden=false;
+            shareImageButton.onclick=async()=>{
+              if(shareImageButton.disabled)return;shareImageButton.disabled=true;
+              try{await navigator.share({title:"Recibo JR Calçados",files:[file]})}
+              catch(error){if(error.name!=="AbortError")notifyReceipt("Não foi possível compartilhar a imagem. Use Baixar PNG ou salve a prévia.")}
+              finally{shareImageButton.disabled=false}
+            };
+          }
+        }catch(_){/* PNG download and text remain available when file sharing is unsupported. */}
+      }
+    }catch(error){status.textContent="PNG indisponível: "+error.message+" O recibo em texto está abaixo."}
+  }
   function renderSales(){
     const root=document.getElementById("tab-sales");if(!root)return;
     const clients=[...data.salesControl.clients].sort((a,b)=>a.name.localeCompare(b.name,"pt-BR"));
@@ -1333,7 +1384,7 @@ if("serviceWorker" in navigator)navigator.serviceWorker.register("sw.js").catch(
     document.getElementById("client-form").onsubmit=e=>{e.preventDefault();const name=document.getElementById("sales-client-name").value.trim(),note=document.getElementById("sales-client-note").value.trim();if(!name){showToast("Informe o nome do cliente.");return}if(data.salesControl.clients.some(c=>c.name.toLocaleLowerCase("pt-BR")===name.toLocaleLowerCase("pt-BR"))){showToast("Este cliente já está cadastrado.");return}data.salesControl.clients.push({id:uid("cli"),name,note,createdAt:new Date().toISOString()});save();renderSales();showToast("Cliente registrado. Aguardando confirmação online.")};
     document.getElementById("order-form").onsubmit=e=>{e.preventDefault();const clientId=document.getElementById("order-client").value,date=document.getElementById("order-date").value,deliveryStatus=document.getElementById("order-delivery").value,note=document.getElementById("order-note").value.trim(),raw=document.getElementById("order-items").value.trim();if(!clientId||!date||!raw){showToast("Informe cliente, data e itens.");return}const items=[];for(const line of raw.split(/\n+/)){const parts=line.split(";").map(x=>x.trim());if(parts.length<3){showToast("Use: referência ; pares ; preço por par.");return}const qty=Number(parts[1]),unitPriceMills=parseSalesPriceMills(parts[2]);if(!parts[0]||!Number.isSafeInteger(qty)||qty<=0||!Number.isFinite(unitPriceMills)||unitPriceMills<0){showToast("Há item inválido no pedido.");return}items.push({ref:parts[0].toUpperCase(),qty,unitPriceMills})}const totalMills=items.reduce((n,i)=>n+i.qty*i.unitPriceMills,0);if(totalMills%10!==0){showToast("O total do pedido não fecha em centavos. Confira quantidades e preços.");return}const totalCents=totalMills/10;data.salesControl.orders.push({id:uid("ped"),clientId,date,items,totalCents,deliveryStatus,note,createdAt:new Date().toISOString()});save();renderSales();showToast("Pedido registrado. Aguardando confirmação online.")};
     document.getElementById("payment-form").onsubmit=e=>{e.preventDefault();const clientId=document.getElementById("payment-client").value,date=document.getElementById("payment-date").value,amountCents=parseSalesMoney(document.getElementById("payment-amount").value),method=document.getElementById("payment-method").value,note=document.getElementById("payment-note").value.trim();if(!clientId||!date||!Number.isFinite(amountCents)||amountCents<=0){showToast("Informe cliente, data e valor recebido.");return}let remaining=amountCents;const allocations=[];const eligible=data.salesControl.orders.filter(o=>o.clientId===clientId&&o.deliveryStatus!=="cancelled"&&o.date<=date&&orderBalanceCents(o)>0).sort((a,b)=>a.date.localeCompare(b.date)||String(a.createdAt||"").localeCompare(String(b.createdAt||"")));for(const o of eligible){if(remaining<=0)break;const use=Math.min(remaining,orderBalanceCents(o));if(use>0){allocations.push({orderId:o.id,amountCents:use});remaining-=use}}data.salesControl.payments.push({id:uid("rec"),clientId,date,amountCents,method,note,allocations,createdAt:new Date().toISOString()});save();renderSales();showToast("Recebimento registrado. Aguardando confirmação online.")};
-    document.querySelectorAll("[data-sales-receipt]").forEach(b=>b.onclick=async()=>{const o=data.salesControl.orders.find(x=>x.id===b.dataset.salesReceipt);if(!o)return;const txt=receiptText(o);try{if(navigator.share)await navigator.share({title:"Recibo JR Calçados",text:txt});else{await navigator.clipboard.writeText(txt);showToast("Recibo copiado.")}}catch(e){if(e.name!=="AbortError")showToast("Não foi possível compartilhar o recibo.")}});
+    document.querySelectorAll("[data-sales-receipt]").forEach(b=>b.onclick=()=>{const order=data.salesControl.orders.find(x=>x.id===b.dataset.salesReceipt);if(order)openReceipt(order);else showToast("Pedido não encontrado. Abra a aba Pedidos novamente.")});
   }
   const prevRenderSales=render;
   render=function(){if(ui.tab==="sales"){ensureWeek();renderSales();return}prevRenderSales()};
