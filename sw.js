@@ -1,6 +1,6 @@
 "use strict";
-const CACHE="acompanhar-producao-shell-v27";
-const SHELL=["./","./index.html","./manifest.webmanifest","./inventory-guard.js","./dashboard-view.js?v=27","./sales-receipt.js"];
+const CACHE="acompanhar-producao-shell-v28";
+const SHELL=["./","./index.html","./manifest.webmanifest","./inventory-guard.js","./dashboard-view.js?v=27","./sales-receipt.js","./sales-order.js?v=28","./order-fulfillment.js?v=28","./finance-preview.js?v=28"];
 
 self.addEventListener("install",event=>{
   event.waitUntil(caches.open(CACHE).then(cache=>cache.addAll(SHELL)).then(()=>self.skipWaiting()));

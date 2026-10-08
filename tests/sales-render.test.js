@@ -6,6 +6,7 @@ const path=require('node:path');
 const vm=require('node:vm');
 const Inventory=require('../inventory-guard');
 const Dashboard=require('../dashboard-view');
+const Finance=require('../finance-preview');
 const {state}=require('./fixtures/dashboard-state');
 const html=fs.readFileSync(path.join(__dirname,'../index.html'),'utf8');
 const scripts=[...html.matchAll(/<script([^>]*)>([\s\S]*?)<\/script>/g)].filter(m=>m[2].trim());
@@ -40,7 +41,7 @@ function app(fixture=salesState()){
     constructor(...args){super(...(args.length?args:['2026-10-07T21:00:00Z']))}
     static now(){return new Date('2026-10-07T21:00:00Z').getTime()}
   };
-  const context=vm.createContext({FioriInventory:Inventory,FioriDashboard:Dashboard,
+  const context=vm.createContext({FioriInventory:Inventory,FioriDashboard:Dashboard,FioriFinance:Finance,FioriFulfillment:require("../order-fulfillment"),
     Date:FixedDate,Intl,console,navigator:{},setTimeout(){},clearTimeout(){},
     localStorage:{getItem:()=>JSON.stringify(fixture),setItem(){throw Error('Unexpected save')}},
     document:{getElementById:node,querySelector:node,
@@ -104,4 +105,63 @@ test('client names are escaped while displaying orders',()=>{
   const {api,node}=app(fixture);api.switchTab('sales');
   assert.match(node('tab-sales').innerHTML,/&lt;img src=x onerror=alert\(1\)&gt;/);
   assert.doesNotMatch(node('tab-sales').innerHTML,/<img src=x/);
+});
+
+test('fulfillment view states its limits and separates pending delivery from paid status',()=>{
+ const {api,node}=app();const before=JSON.stringify(api.getData());api.switchTab('sales');
+ const rendered=node('tab-sales').innerHTML;
+ assert.match(rendered,/id="sales-fulfillment"/);assert.match(rendered,/Projeção por quantidade, sujeita a conferência/);
+ assert.match(rendered,/Nada é reservado ou baixado/);assert.match(rendered,/Prazo não informado/);
+ assert.match(rendered,/não confirma[m]? a grade/);assert.match(rendered,/não baixa o estoque automaticamente/);
+ assert.match(rendered,/data-fulfillment-order="order-0"/); // Paid still needs delivery.
+ assert.doesNotMatch(rendered,/data-fulfillment-order="order-2"/); // Cancelled is out of the queue.
+ assert.match(rendered,/Prioridade 1/);assert.equal(JSON.stringify(api.getData()),before);
+});
+test('fulfillment navigation opens inventory and mountings without saving data',()=>{
+ const {api,node}=app(),before=JSON.stringify(api.getData());api.switchTab('sales');
+ node('fulfillment-view-mountings').onclick();assert.equal(node('tab-week').hidden,false);
+ api.switchTab('sales');assert.match(node('tab-sales').innerHTML,/O que falta para atender/);
+ assert.equal(JSON.stringify(api.getData()),before);
+});
+test('fulfillment receives updated orders, uses current accumulated stock and has no cached reservations',()=>{
+ const fixture=salesState(1);fixture.salesControl.orders[0].items[0].qty=200;
+ const {api,node}=app(fixture);api.switchTab('sales');assert.match(node('tab-sales').innerHTML,/Pronto na projeção: <strong>168/);
+ const next=salesState(1);next.salesControl.orders[0].items[0].qty=10;const before=JSON.stringify(next);api.replaceData(next);
+ assert.match(node('tab-sales').innerHTML,/Pronto na projeção: <strong>10/);assert.equal(JSON.stringify(api.getData()),before);
+});
+test('unmatched items require review without fabricating production or delivery deadlines',()=>{
+ const fixture=salesState(1);fixture.salesControl.orders[0].items=[{ref:'FORMAS',qty:1,unitPriceMills:10000}];
+ const {api,node}=app(fixture);api.switchTab('sales');const rendered=node('tab-sales').innerHTML;
+ assert.match(rendered,/Item sem vínculo com um modelo de produção/);assert.match(rendered,/Conferir itens antes de planejar/);
+ assert.doesNotMatch(rendered,/Pronto na projeção:/);assert.match(rendered,/Prazo não informado/);
+});
+test('fulfillment escapes reference, mounting and color labels',()=>{
+ const fixture=salesState(1);fixture.salesControl.orders[0].items[0].qty=300;
+ fixture.settings.mountings[0].name='<img src=x onerror=alert(1)>';
+ for(const entry of fixture.weeks['2026-10-05'].entries)if(entry.mountingId==='a')entry.color='<svg onload=alert(1)>';
+ fixture.salesControl.orders[0].items.push({ref:'<script>alert(1)</script>',qty:1,unitPriceMills:1});
+ const {api,node}=app(fixture);api.switchTab('sales');const rendered=node('tab-sales').innerHTML;
+ assert.doesNotMatch(rendered,/<img src=x|<svg onload=|<script>alert/);
+ assert.match(rendered,/&lt;img src=x/);assert.match(rendered,/&lt;svg onload=/);assert.match(rendered,/&lt;SCRIPT&gt;/);
+});
+test('fulfillment and price parser are loaded before sales bootstrap and included in v28 offline shell',()=>{
+ const sw=fs.readFileSync(path.join(__dirname,'../sw.js'),'utf8');
+ for(const filename of ['order-fulfillment.js?v=28','sales-order.js?v=28']){
+ assert.ok(html.includes('<script src="'+filename+'"></script>'));assert.ok(sw.includes('"./'+filename+'"'));
+ assert.ok(html.indexOf(filename)<html.indexOf('function salesControlBootstrap'));
+ }assert.match(sw,/shell-v28/);
+});
+
+test('projection-only inventory divergence is explained locally instead of pointing to an absent dashboard warning',()=>{
+ const fixture=salesState(1);fixture.stockLedger.push({id:'adjust-global',date:'2026-10-07',sector:'solado',direction:'out',ref:'@line:500',qty:96,color:'Preto'});
+ const {api,node}=app(fixture);api.switchTab('sales');const rendered=node('tab-sales').innerHTML;
+ assert.match(rendered,/A projeção está suspensa/);assert.match(rendered,/saldo nas montagens \(96 pares\) maior que o saldo global \(0 pares\)/);
+ assert.match(rendered,/solado · Linha 500 · Preto/);assert.doesNotMatch(rendered,/confira os alertas na visão da semana/);
+});
+
+test('shared-line capacity uncertainty is visible even when another reference has usable ready stock',()=>{
+ const fixture=salesState(2);fixture.salesControl.orders[0].deliveryStatus='partial';fixture.salesControl.orders[1].items=[{ref:'512',qty:144,unitPriceMills:10000}];
+ const {api,node}=app(fixture);api.switchTab('sales');const rendered=node('tab-sales').innerHTML;
+ assert.match(rendered,/Capacidade da linha 500 a conferir/);assert.match(rendered,/Os materiais compartilhados não foram distribuídos/);
+ assert.match(rendered,/Pronto na projeção: <strong>72/);
 });
