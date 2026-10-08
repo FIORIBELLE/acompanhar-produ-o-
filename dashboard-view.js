@@ -16,6 +16,16 @@
     if(loose)parts.push(`${number(loose)} ${loose===1?'par avulso':'pares avulsos'}`);
     return parts.join(' + ')||'0 fichas';
   }
+  const materialSheetSize=(settings={})=>positiveUnit(settings.pairsPerSheet,72);
+  function materialUnitsText(pairs,settings={}){
+    const qty=Number(pairs??0),sheet=materialSheetSize(settings);
+    if(!Number.isSafeInteger(qty))return 'Quantidade inválida';
+    if(qty<0)return `${number(qty)} pares (saldo negativo)`;
+    const sheets=Math.floor(qty/sheet),rest=qty%sheet,parts=[];
+    if(sheets)parts.push(`${number(sheets)} ${sheets===1?'ficha':'fichas'}`);
+    if(rest)parts.push(`${number(rest)} ${rest===1?'par':'pares'}`);
+    return parts.join(' + ')||'0 fichas';
+  }
   function modelInfo(state,idOrRef){
     const models=state.settings?.models||[],key=String(idOrRef||'').toUpperCase();
     const refOf=m=>String(m?.ref||String(m?.name||'').match(/\b\d{3}R?\b/i)?.[0]||'').toUpperCase();
@@ -64,5 +74,5 @@
     const total=items.reduce((sum,item)=>sum+item.goal,0),goal=Number(week.goal)||0;
     return {items,total,mismatch:items.length>0&&goal>0&&total!==goal};
   }
-  return {unitsText,modelInfo,displayStateForWeek,mountingCards,remainingPlan};
+  return {unitsText,materialSheetSize,materialUnitsText,modelInfo,displayStateForWeek,mountingCards,remainingPlan};
 });

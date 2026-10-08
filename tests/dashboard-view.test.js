@@ -83,7 +83,7 @@ test('renders three primary blocks with detailed material and finance disclosure
   for(const id of ['week-ready-stock','week-mounting-stock','week-remaining'])assert.match(rendered,new RegExp(`id="${id}"`));
   assert.match(rendered,/Cabedais nas montagens/);assert.match(rendered,/2 fichas \+ 4 kits/);
   assert.match(rendered,/Plano por modelo não definido/);assert.match(rendered,/Meta salva: 864 pares/);
-  assert.match(rendered,/<details class="mounting-materials"><summary>Ver materiais e capacidade/);
+  assert.match(rendered,/<details class="mounting-materials"><summary>Ver cores dos materiais e capacidade/);
   assert.match(rendered,/<details class="block dashboard-details" id="week-details"><summary>/);
   assert.ok(rendered.indexOf('valor a pagar')>rendered.indexOf('id="week-details"'));
   assert.equal(JSON.stringify(api.getData()),before,'render must not save or change operational state');
@@ -139,4 +139,81 @@ test('keeps sync status in sticky chrome, including pending and conflict message
 });
 test('all inline scripts parse, including the Sales module',()=>{
   for(const script of scripts)assert.doesNotThrow(()=>new vm.Script(script[2]));
+});
+
+for(const [qty,expected] of [[0,'0 fichas'],[1,'1 par'],[6,'6 pares'],[71,'71 pares'],[72,'1 ficha'],[73,'1 ficha + 1 par'],[144,'2 fichas'],[150,'2 fichas + 6 pares'],[168,'2 fichas + 24 pares'],[576,'8 fichas'],[588,'8 fichas + 12 pares'],[1152,'16 fichas']]){
+  test(`material summary formats ${qty} pairs as whole sheets and leftover pairs`,()=>{
+    assert.equal(Dashboard.materialUnitsText(qty,{pairsPerSheet:72,pairsPerKit:6}),expected);
+  });
+}
+test('material sheet format follows configured size, falls back safely and never hides a negative balance',()=>{
+  assert.equal(Dashboard.materialUnitsText(150,{pairsPerSheet:48}),'3 fichas + 6 pares');
+  for(const size of [0,-1,2.5,NaN,Infinity,'bad',null]){
+    assert.equal(Dashboard.materialUnitsText(150,{pairsPerSheet:size}),'2 fichas + 6 pares');
+    assert.equal(Dashboard.materialSheetSize({pairsPerSheet:size}),72);
+  }
+  assert.equal(Dashboard.materialUnitsText(-6),'-6 pares (saldo negativo)');
+  for(const qty of [1.5,NaN,Infinity,'bad'])assert.equal(Dashboard.materialUnitsText(qty),'Quantidade inválida');
+});
+test('mounting material totals combine colors by line and keep per-color pairs in closed details',()=>{
+  const fixture=state(),entries=fixture.weeks['2026-10-05'].entries;
+  const solado=entries.find(e=>e.mountingId==='a'&&e.kind==='solado');
+  const palmilha=entries.find(e=>e.mountingId==='a'&&e.kind==='palmilha');
+  solado.qty=144;palmilha.qty=288;
+  for(const [i,color] of ['Rose','Off White','Ouro Light'].entries()){
+    entries.push({...solado,id:'sheet-sole-'+i,color},{...palmilha,id:'sheet-insole-'+i,color});
+  }
+  const {api,node}=app(fixture),before=JSON.stringify(api.getData());api.renderWeek();
+  const card=node('tab-week').innerHTML.match(/data-mounting-card="a"[\s\S]*?<\/article>/)[0];
+  const summary=card.split('<details class="mounting-materials">')[0];
+  assert.match(summary,/Solados<\/span><strong>8 fichas<\/strong>/);
+  assert.match(summary,/Palmilhas<\/span><strong>16 fichas<\/strong>/);
+  assert.doesNotMatch(summary,/576 pares|1\.152 pares/);
+  assert.match(card,/Solado · Preto: 144 pares/);assert.match(card,/Palmilha · Preto: 288 pares/);
+  assert.match(card,/Fichas por quantidade · 72 pares cada/);
+  assert.match(card,/não confirma uma grade completa de cores e tamanhos/);
+  assert.doesNotMatch(card,/<details class="mounting-materials" open/);
+  assert.equal(JSON.stringify(api.getData()),before);
+});
+test('material sheets do not change available production when colors do not match',()=>{
+  const {api,node}=app(),before=JSON.stringify(api.getData());api.renderWeek();
+  const card=node('tab-week').innerHTML.match(/data-mounting-card="b"[\s\S]*?<\/article>/)[0];
+  assert.match(card,/Linha 300/);assert.match(card,/1 ficha \+ 24 pares/);assert.match(card,/Não usa palmilha/);
+  assert.match(card,/Linha 500/);assert.match(card,/Palmilhas<\/span><strong>1 ficha/);
+  assert.match(card,/pode produzir <strong>96 pares<\/strong>/);
+  assert.equal(JSON.stringify(api.getData()),before);
+});
+test('shows zero material in an existing line and material-only mounting without changing state',()=>{
+  const fixture=state(),entries=fixture.weeks['2026-10-05'].entries;
+  const e=entries.find(e=>e.mountingId==='a'&&e.kind==='solado');
+  entries.push({...e,id:'material-only',mountingId:'empty',qty:150});
+  const {api,node}=app(fixture);api.renderWeek();
+  const card=node('tab-week').innerHTML.match(/data-mounting-card="empty"[\s\S]*?<\/article>/)[0];
+  assert.match(card,/Sem cabedais com saldo nesta montagem/);
+  assert.match(card,/Solados<\/span><strong>2 fichas \+ 6 pares/);
+  assert.match(card,/Palmilhas<\/span><strong>0 fichas/);
+});
+test('material summary respects configured size and archived balances',()=>{
+  const fixture=state();fixture.settings.pairsPerSheet=48;
+  const previous=fixture.weeks['2026-09-28'];
+  previous.entries=[{...fixture.weeks['2026-10-05'].entries.find(e=>e.kind==='solado'),id:'old-material',date:'2026-09-30',qty:150}];
+  const {api,node}=app(fixture),before=JSON.stringify(api.getData());api.renderWeek('2026-09-28');
+  const rendered=node('tab-week').innerHTML;
+  assert.match(rendered,/Fichas por quantidade · 48 pares cada/);
+  assert.match(rendered,/Solados<\/span><strong>3 fichas \+ 6 pares/);
+  assert.equal(JSON.stringify(api.getData()),before);
+});
+test('material color detail escapes untrusted color names',()=>{
+  const fixture=state();fixture.weeks['2026-10-05'].entries.find(e=>e.kind==='solado').color='<img src=x onerror=alert(1)>';
+  const {api,node}=app(fixture);api.renderWeek();
+  assert.match(node('tab-week').innerHTML,/&lt;img src=x onerror=alert\(1\)&gt;/);
+  assert.doesNotMatch(node('tab-week').innerHTML,/<img src=x/);
+});
+
+test('new dashboard script uses a cache-busted URL also precached by the service worker',()=>{
+  const scriptUrl=html.match(/<script src="(dashboard-view\.js\?v=[^"]+)"><\/script>/)?.[1];
+  assert.equal(scriptUrl,'dashboard-view.js?v=27');
+  const sw=fs.readFileSync(path.join(__dirname,'../sw.js'),'utf8');
+  assert.ok(sw.includes('"./'+scriptUrl+'"'));
+  assert.match(sw,/shell-v27/);
 });
