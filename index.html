@@ -166,6 +166,7 @@ footer{color:var(--soft);font-size:.78rem;text-align:center;padding:8px 0 24px}
 @media(max-width:400px){.app-chrome h1{font-size:1.2rem}.app-chrome .status{font-size:.73rem}.dashboard-model .row-top{align-items:flex-start}.dashboard-model .value{font-size:.9rem}.mounting-card{padding:10px}}
 
 .goal-model-fields{padding:12px 0;border-bottom:1px solid var(--line)}.goal-model-fields>.form-grid{margin-top:8px}.goal-reference-metrics{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin-top:12px}.goal-reference-metrics>div{display:flex;flex-direction:column;gap:3px}.goal-reference-metrics span,.goal-reference-metrics small{font-size:12px;color:var(--muted)}.goal-reference-metrics strong{font-size:18px}.goal-reference-card .sub{margin-bottom:0}@media(min-width:760px){.goal-reference-metrics{grid-template-columns:repeat(4,minmax(0,1fr))}}
+.sheet-editor{margin:18px 0;padding:14px;border:1px solid var(--line);border-radius:14px}.sheet-color-row{margin:12px 0;padding:12px;background:var(--bg);border-radius:10px}.sheet-sizes{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:7px;margin-top:10px}.sheet-sizes .field{margin:0}.sheet-sizes input{padding:10px 5px;text-align:center;min-width:0}.sheet-color-row>.row-top{margin-bottom:6px}.sheet-editor .button-row{flex-wrap:wrap}.unknown-choice{display:flex;gap:8px;align-items:center;font-size:14px;margin:10px 0}.unknown-choice input{width:auto}
 </style>
 
 <style id="remote-sync-style">
@@ -216,7 +217,7 @@ footer{color:var(--soft);font-size:.78rem;text-align:center;padding:8px 0 24px}
     <button class="btn" id="edit-goal" type="button">Editar meta</button>
     <button class="btn primary" id="share" type="button">Compartilhar resumo</button>
   </div>
-  <footer id="app-footer">Base online Fiori Belle · sincronização automática · v2026.10.08-r8.4</footer>
+  <footer id="app-footer">Base online Fiori Belle · sincronização automática · v2026.10.08-r8.5</footer>
 </div>
 
 <div class="toast" id="toast" hidden role="status" aria-live="polite"></div>
@@ -232,6 +233,7 @@ footer{color:var(--soft);font-size:.78rem;text-align:center;padding:8px 0 24px}
 <script src="order-fulfillment.js?v=28"></script>
 <script src="finance-preview.js?v=28"></script>
 <script src="assembly-finance.js?v=30"></script>
+<script src="standard-sheet.js?v=33"></script>
 <script>
 "use strict";
 const STORAGE_KEY="acompanhar_producao_v2";
@@ -591,6 +593,7 @@ function renderWeek(key=ui.viewWeek||currentWeekKey()){
     ${readOnly?`<div class="block readonly"><div><strong>Semana arquivada</strong><div class="sub" style="margin:2px 0 0">Somente leitura</div></div><button class="btn small" id="back-current">Voltar à atual</button></div>`:""}
     <p class="dashboard-heading">Semana de ${weekLabel(key)}</p>
     ${issues.length?`<div class="notice dashboard-alert" role="alert"><strong>Há divergências de estoque a revisar.</strong> Os saldos exibidos não confirmam o estoque físico.<details><summary>Ver ${issues.length} ${issues.length===1?"divergência":"divergências"}</summary><ul>${issues.map(issue=>`<li>${esc(issue.message)}</li>`).join("")}</ul></details></div>`:""}
+    ${readOnly?"":unknownColorNotice(data,spDate())}
     ${readOnly?"":readyStockWeekMarkup(ready)}
     ${mountingStockWeekMarkup(s.stockByMounting,mountings,readOnly,displayState)}
     ${remainingWeekMarkup(w,s,readOnly,key,displayState)}
@@ -603,25 +606,119 @@ function entriesForDate(date){
   const found=[];for(const [key,w] of Object.entries(data.weeks))for(const e of w.entries||[])if(e.date===date)found.push({...e,weekKey:key});
   return found.sort((a,b)=>String(b.createdAt).localeCompare(String(a.createdAt)));
 }
+// Sheet editors only create drafts. Saving always validates a complete cloned state.
+const sheetEditors=new Map();
+function recordedSizeText(entry){
+  const sizes=entry.sizeBreakdown||entry.sizes;
+  if(!sizes||typeof sizes!=="object"||Array.isArray(sizes))return '';
+  const values=Object.entries(sizes).filter(([size,qty])=>/^\d+$/.test(size)&&Number.isSafeInteger(qty)&&qty>0);
+  return values.length?' · Grade '+values.map(([size,qty])=>size+': '+fmt(qty)).join(' / '):'';
+}
+function sheetGridMarkup(prefix,rows){
+  return rows.map((row,index)=>`<div class="sheet-color-row"><div class="row-top"><label for="${prefix}-color-${index}">Cor ${index+1}</label><button type="button" class="btn small" data-sheet-remove="${index}">Remover cor</button></div><input id="${prefix}-color-${index}" data-sheet-color="${index}" value="${esc(row.color)}" list="entry-colors" aria-label="Cor ${index+1}"><div class="sheet-sizes">${['35','36','37','38','39'].map(size=>`<div class="field"><label for="${prefix}-${index}-${size}">${size}</label><input id="${prefix}-${index}-${size}" data-sheet-size="${index}" data-size="${size}" aria-label="Cor ${index+1}, tamanho ${size}" inputmode="numeric" pattern="[0-9]*" value="${esc(row.sizeBreakdown?.[size]??0)}"></div>`).join('')}</div><p class="sub" id="${prefix}-row-total-${index}" aria-live="polite"></p></div>`).join('');
+}
+function mountSheetGrid(prefix,rows,onChange=()=>{}){
+  const root=document.getElementById(prefix+'-grid');
+  const draft=clone(rows);let revision=0;
+  const read=()=>draft.map(row=>({color:row.color,sizeBreakdown:Object.fromEntries(Object.entries(row.sizeBreakdown).map(([size,value])=>[size,typeof value==="number"?value:/^\d+$/.test(value)?Number(value):value]))}));
+  function rowTotals(){read().forEach((row,index)=>{const values=Object.values(row.sizeBreakdown),total=values.reduce((a,b)=>a+b,0),node=document.getElementById(prefix+"-row-total-"+index);node.textContent=values.every(q=>Number.isSafeInteger(q)&&q>=0)&&Number.isSafeInteger(total)?`${row.color||"Cor "+(index+1)}: ${fmt(total)} pares`:"Confira as quantidades desta cor."})}
+  const update=()=>{revision++;rowTotals();onChange(read())};
+  function draw(){
+    root.innerHTML=sheetGridMarkup(prefix,draft);
+    root.querySelectorAll('[data-sheet-color]').forEach(el=>el.oninput=()=>{draft[Number(el.dataset.sheetColor)].color=el.value;update()});
+    root.querySelectorAll('[data-sheet-size]').forEach(el=>el.oninput=()=>{draft[Number(el.dataset.sheetSize)].sizeBreakdown[el.dataset.size]=el.value;update()});
+    root.querySelectorAll('[data-sheet-remove]').forEach(el=>el.onclick=()=>{draft.splice(Number(el.dataset.sheetRemove),1);draw();update()});
+    rowTotals();
+  }
+  draw();
+  return{read,revision:()=>revision,add(){draft.push({color:'',sizeBreakdown:{'35':0,'36':0,'37':0,'38':0,'39':0}});draw();update()}};
+}
+function sheetEntryMarkup(prefix){return `<section class="sheet-editor" id="${prefix}-sheet" hidden><h3>Grade desta ficha</h3><p class="sub">Confira cores e numeração antes de salvar. As alterações abaixo valem somente para este lançamento. Cada ficha tem 72 pares. O estoque é conferido por cor e quantidade; a numeração fica registrada como detalhe, sem saldo separado por tamanho.</p><p class="notice" id="${prefix}-sheet-status" role="status"></p><div id="${prefix}-grid"></div><div class="button-row"><button type="button" class="btn" id="${prefix}-add-color">Adicionar cor</button><button type="button" class="btn" id="${prefix}-reset-sheet">Reaplicar padrão</button><button type="button" class="btn" id="${prefix}-configure-sheet">Configurar padrão</button></div></section>`}
+function setupSheetEntry(prefix,getContext,onChange=()=>{},onPatternSaved=()=>{}){
+  const unit=document.getElementById(prefix+'-unit'),qty=document.getElementById(prefix+'-qty'),section=document.getElementById(prefix+'-sheet'),status=document.getElementById(prefix+'-sheet-status');
+  let grid=null,currentContext='',active=false,pendingMessage='';
+  const validSheets=()=>/^\d+$/.test(qty.value)&&Number.isSafeInteger(Number(qty.value))&&Number(qty.value)>0?Number(qty.value):null;
+  const check=()=>{
+    if(!grid){status.textContent=pendingMessage||'Informe fichas inteiras para carregar a grade.';return}
+    try{const value=FioriSheets.validateRows(grid.read(),{expectedTotal:validSheets()*72});status.textContent=`${fmt(value.total)} pares na grade · ${fmt(validSheets())} ${validSheets()===1?'ficha':'fichas'}. Confira cores e numeração.`}catch(error){status.textContent=error.message}
+    onChange();
+  };
+  function refresh(force=false){
+    active=unit.value==='sheets';section.hidden=!active;
+    document.getElementById(prefix+'-color').disabled=active;
+    const unknown=document.getElementById(prefix+'-allow-unknown');if(unknown)unknown.disabled=active;
+    if(!active)return;
+    const context=getContext(),key=JSON.stringify(context);currentContext=key;
+    grid=null;document.getElementById(prefix+'-grid').innerHTML='';
+    if(typeof FioriSheets==='undefined'){pendingMessage='Atualize o app para carregar a ficha padrão.';check();return}
+    if(!validSheets()){pendingMessage='Informe um número inteiro de fichas maior que zero.';check();return}
+    try{const result=FioriSheets.buildGrid(data,{...context,sheets:validSheets()});grid=mountSheetGrid(prefix,result.rows,check);pendingMessage='';check()}
+    catch(error){pendingMessage=error.message;check()}
+  }
+  const controller={refresh,rows(){if(unit.value!=='sheets')return null;if(currentContext!==JSON.stringify(getContext()))throw Error('O modelo ou a linha mudou. Reaplique o padrão.');if(!validSheets())throw Error('Informe fichas inteiras maiores que zero.');if(!grid)throw Error(pendingMessage||'Configure a grade padrão antes de lançar por ficha.');return FioriSheets.validateRows(grid.read(),{expectedTotal:validSheets()*72}).rows},sheets:validSheets};
+  sheetEditors.set(prefix,controller);
+  document.getElementById(prefix+'-add-color').onclick=()=>{if(grid)grid.add();else showToast('Configure o padrão desta linha ou referência primeiro.')};
+  document.getElementById(prefix+'-reset-sheet').onclick=()=>refresh(true);
+  document.getElementById(prefix+'-configure-sheet').onclick=()=>openSheetPattern(getContext(),()=>{onPatternSaved();refresh(true)});
+  refresh();return controller;
+}
+function invalidateSheetPatternDialog(){if(goalDialog==="sheet-pattern")closeModal()}
+function openSheetPattern(context={},onSaved=()=>{}){
+  if(typeof FioriSheets==='undefined'){showToast('Atualize o app para carregar a ficha padrão.');return}
+  if(assemblyBusy()){showToast('Aguarde a base online confirmar os dados antes de configurar a ficha.');return}
+  const initial=clone(data),tab=ui.tab,scope=context.ref?'ref':'line',target=context.ref||context.line||availableLines()[0];
+  showModal(`<h2 id="modal-title">Padrão de cores e numeração</h2><p class="sub">Cadastre somente uma grade confirmada de 72 pares. O padrão de referência tem prioridade sobre o da linha. O histórico e os saldos não serão alterados.</p><div class="form-grid"><div class="field"><label for="pattern-scope">Aplicar em</label><select id="pattern-scope"><option value="line">Linha</option><option value="ref">Referência</option></select></div><div class="field"><label for="pattern-target">Linha ou referência</label><select id="pattern-target"></select></div></div><p class="notice" id="pattern-status"></p><div id="pattern-grid"></div><button class="btn" type="button" id="pattern-add-color">Adicionar cor</button><div class="button-row"><button class="btn" data-modal-close>Cancelar</button><button class="btn primary" id="pattern-save">Salvar padrão</button></div>`,'sheet-pattern');
+  const version=goalDialogVersion,scopeEl=document.getElementById('pattern-scope'),targetEl=document.getElementById('pattern-target');let grid,used=false;
+  scopeEl.value=scope;
+  function referenceOptions(){
+    const found=new Map();
+    for(const [key,item] of Object.entries(data.settings.costCatalog||{})){const ref=String(item?.ref||key).toUpperCase();if(/^[1-9]\d{2}R?$/.test(ref))found.set(ref,String(item?.model||ref))}
+    for(const model of data.settings.models){const ref=modelRefValue(model);if(/^[1-9]\d{2}R?$/.test(ref))found.set(ref,model.name)}
+    for(const item of (Array.isArray(data.settings.sheetPatterns?.templates)?data.settings.sheetPatterns.templates:[]))if(item?.scope==='ref'&&/^[1-9]\d{2}R?$/.test(item.target))found.set(item.target,found.get(item.target)||item.target);
+    if(context.ref&&/^[1-9]\d{2}R?$/.test(context.ref))found.set(context.ref,found.get(context.ref)||context.ref);
+    return [...found].sort(([a],[b])=>a.localeCompare(b,'pt-BR',{numeric:true}));
+  }
+  function loadTarget(selected){targetEl.innerHTML=scopeEl.value==='line'?[...new Set([...availableLines(),context.line].filter(x=>/^[1-9]00$/.test(x)))].map(line=>`<option value="${esc(line)}">Linha ${esc(line)}</option>`).join(''):referenceOptions().map(([ref,name])=>`<option value="${esc(ref)}">Ref. ${esc(ref)} · ${esc(name)}</option>`).join('');if(selected&&[...targetEl.options].some(o=>o.value===selected))targetEl.value=selected;loadGrid()}
+  function showTotal(){try{const value=FioriSheets.validateRows(grid.read(),{expectedTotal:72});document.getElementById('pattern-status').textContent=`${fmt(value.total)} pares. Ao salvar, este será o padrão dos próximos lançamentos.`}catch(error){document.getElementById('pattern-status').textContent=error.message}}
+  function loadGrid(){const ref=scopeEl.value==='ref'?targetEl.value:null,model=ref?data.settings.models.find(m=>modelRefValue(m)===ref):null,line=ref?(model?modelLine(model.id):ref.slice(0,1)+"00"):targetEl.value,result=FioriSheets.resolvePattern(data,{line,ref});grid=mountSheetGrid('pattern',result.ok?result.template.rows:[{color:'',sizeBreakdown:{'35':0,'36':0,'37':0,'38':0,'39':0}}],showTotal);showTotal()}
+  scopeEl.onchange=()=>loadTarget();targetEl.onchange=loadGrid;loadTarget(target);
+  document.getElementById('pattern-add-color').onclick=()=>grid.add();
+  document.getElementById('pattern-save').onclick=()=>{
+    if(used||ui.tab!==tab||goalDialog!=='sheet-pattern'||goalDialogVersion!==version||document.getElementById('modal').hidden)return;
+    if(assemblyBusy()||JSON.stringify(data)!==JSON.stringify(initial)){showToast('Os dados mudaram. Feche e reabra a configuração após sincronizar.');return}
+    try{const next=FioriSheets.savePattern(data,{scope:scopeEl.value,target:targetEl.value,rows:grid.read()});if(!persistCandidate(next,initial))return;used=true;closeModal();onSaved();showToast('Padrão salvo. Aguardando confirmação online.')}catch(error){showToast(error.message)}
+  };
+}
+function unknownColorNotice(state,until){
+  if(typeof FioriSheets==='undefined')return '';
+  const summary=FioriSheets.unknownColorSummary(state,{until,inventory:FioriInventory});
+  if(!summary.valid)return '<div class="notice dashboard-alert">Pares sem cor: saldo a conferir devido a divergências de estoque.</div>';
+  if(!summary.total)return '';
+  const labels={cabedal:'Cabedal',solado:'Solado',palmilha:'Palmilha',produto_pronto:'Produto pronto'};
+  return `<div class="notice dashboard-alert" role="status"><strong>${fmt(summary.total)} pares sem cor discriminada no estoque.</strong><p class="sub">${Object.entries(summary.bySector).filter(([,q])=>q>0).map(([sector,q])=>`${esc(labels[sector]||sector)}: ${fmt(q)}`).join(' · ')}. Soma dos saldos dos setores; componentes diferentes não representam pares de sapatos prontos. O histórico foi preservado e precisa de conferência antes de atribuir cores.</p></div>`;
+}
+
 let entrySubmissionGeneration=0;
 let activeEntrySubmission={generation:0,id:null,used:false};
 function renderEntry(){
-  const submission={generation:++entrySubmissionGeneration,id:uid("e"),used:false};activeEntrySubmission=submission;
+  const submission={generation:++entrySubmissionGeneration,id:uid("e"),used:false,snapshot:JSON.stringify(data)};activeEntrySubmission=submission;
   const date=document.getElementById("entry-date")?.value||spDate(),models=activeModels(),mountings=activeMountings(),entries=entriesForDate(date);
   document.getElementById("tab-entry").innerHTML=`
     <form class="block" id="entry-form"><h2>${ui.editingEntry?"Editar lançamento":"Novo lançamento"}</h2><p class="sub">Cabedal é controlado por referência. Palmilha e solado são saldos compartilhados por linha: qualquer modelo da mesma linha pode consumir esses componentes.</p>
       <div class="field"><label for="entry-date">Data</label><input id="entry-date" type="date" value="${date}"></div>
       <div class="field"><label for="entry-mounting">Montagem</label><select id="entry-mounting">${mountings.map(m=>`<option value="${m.id}">${esc(m.name)}</option>`).join("")}</select></div>
       <div class="form-grid"><div class="field"><label for="entry-kind">O que está entrando</label><select id="entry-kind">${COMPONENTS.map(c=>`<option value="${c.id}">${esc(c.name)}</option>`).join("")}<option value="finished">Produto pronto</option></select></div><div class="field"><label for="entry-model" id="entry-target-label">Modelo</label><select id="entry-model"></select></div></div>
-      <div class="field"><label for="entry-color">Cor</label><input id="entry-color" list="entry-colors" placeholder="Cor ou Sem cor discriminada" autocomplete="off"><datalist id="entry-colors"><option value="Sem cor discriminada"><option value="Preto"><option value="Caramelo"><option value="Ouro Light"><option value="Rose"><option value="Off White"></datalist></div>
-      <div class="form-grid"><div class="field"><label for="entry-unit">Unidade</label><select id="entry-unit"><option value="pairs">Pares</option><option value="kits">Kits de ${fmt(data.settings.pairsPerKit)} pares</option></select></div><div class="field"><label for="entry-qty">Quantidade</label><input id="entry-qty" inputmode="numeric" pattern="[0-9]*" placeholder="0" autocomplete="off"></div></div>
+      <div class="field"><label for="entry-color">Cor</label><input id="entry-color" list="entry-colors" placeholder="Informe a cor" autocomplete="off"><datalist id="entry-colors"><option value="Sem cor discriminada"><option value="Preto"><option value="Caramelo"><option value="Ouro Light"><option value="Rose"><option value="Off White"></datalist></div>
+      <div class="form-grid"><div class="field"><label for="entry-unit">Unidade</label><select id="entry-unit"><option value="pairs">Pares</option><option value="kits">Kits de ${fmt(data.settings.pairsPerKit)} pares</option>${ui.editingEntry?'':'<option value="sheets">Fichas de 72 pares</option>'}</select></div><div class="field"><label for="entry-qty">Quantidade</label><input id="entry-qty" inputmode="numeric" pattern="[0-9]*" placeholder="0" autocomplete="off"></div></div>
+      <label class="unknown-choice"><input type="checkbox" id="entry-allow-unknown">Quero registrar sem cor discriminada</label>
+      ${sheetEntryMarkup("entry")}
       <div class="calc" id="entry-assembly-preview" role="status" aria-live="polite" hidden></div>
-      <div class="quick"><button type="button" data-quick="kit">+1 kit</button><button type="button" data-quick="sheet">+1 ficha (${fmt(data.settings.pairsPerSheet)})</button></div>
+      <div class="quick"><button type="button" data-quick="kit">+1 kit</button><button type="button" data-quick="sheet" ${ui.editingEntry?"disabled":""}>+1 ficha (72 pares)</button></div>
       <div class="button-row">${ui.editingEntry?'<button type="button" class="btn" id="cancel-edit">Cancelar</button>':""}<button class="btn primary" type="submit">${ui.editingEntry?"Salvar alteração":"Adicionar lançamento"}</button></div>
     </form>
-    ${data.assemblyControl?'<div class="notice">Produtos prontos anteriores e os vinculados à montagem a pagar ficam protegidos contra edição e exclusão. Para corrigir data, pares ou montador, solicite a revisão do lançamento, preservando estoque e acertos.</div>':""}
+    ${data.assemblyControl?'<div class="notice">Produtos prontos anteriores, os vinculados à montagem a pagar e lançamentos de ficha por cores ficam protegidos contra edição e exclusão isolada. Para corrigir data, pares ou montador, solicite a revisão do lançamento, preservando estoque e acertos.</div>':""}
     <div class="block"><h2>Lançamentos do dia</h2><p class="sub">${fmtDate(date)} · ${entries.reduce((a,e)=>a+Number(e.qty||0),0).toLocaleString("pt-BR")} pares movimentados</p>
-      ${entries.length?entries.map(e=>{const shared=e.kind==="palmilha"||e.kind==="solado",target=shared?`Linha ${entryLine(e)}`:`Modelo ${e.modelName||itemName(data.settings.models,e.modelId)}`;return `<div class="row"><div class="row-top"><div class="entry-main"><div class="entry-title">${esc(e.mountingName||itemName(data.settings.mountings,e.mountingId,"Montagem"))} · ${esc(target)}</div><div class="entry-meta">${esc(e.kind==="finished"?"Produto pronto":COMPONENTS.find(c=>c.id===e.kind)?.name||"Componente")} · ${esc(e.color||"Sem cor")} · ${e.inputUnit==="kits"?`${fmt(e.inputQty)} kits · `:""}${fmt(e.qty)} pares${e.kind==="finished"?" · baixa automática":""}</div></div><div class="entry-actions">${assemblyEntryProtected(e.id)?'<span class="sub">Histórico protegido</span>':`<button class="icon-btn" data-edit="${e.id}" data-week="${e.weekKey}">Editar</button><button class="icon-btn danger" data-delete="${e.id}" data-week="${e.weekKey}">Apagar</button>`}</div></div></div>`}).join(""):'<div class="empty">Nenhum lançamento nesta data.</div>'}
+      ${entries.length?entries.map(e=>{const shared=e.kind==="palmilha"||e.kind==="solado",target=shared?`Linha ${entryLine(e)}`:`Modelo ${e.modelName||itemName(data.settings.models,e.modelId)}`;return `<div class="row"><div class="row-top"><div class="entry-main"><div class="entry-title">${esc(e.mountingName||itemName(data.settings.mountings,e.mountingId,"Montagem"))} · ${esc(target)}</div><div class="entry-meta">${esc(e.kind==="finished"?"Produto pronto":COMPONENTS.find(c=>c.id===e.kind)?.name||"Componente")} · ${esc(e.color||"Sem cor")} · ${e.inputUnit==="kits"?`${fmt(e.inputQty)} kits · `:""}${fmt(e.qty)} pares${esc(recordedSizeText(e))}${e.sheetBatchId?" · ficha por cores":""}${e.kind==="finished"?" · baixa automática":""}</div></div><div class="entry-actions">${assemblyEntryProtected(e.id)?'<span class="sub">Histórico protegido</span>':`<button class="icon-btn" data-edit="${e.id}" data-week="${e.weekKey}">Editar</button><button class="icon-btn danger" data-delete="${e.id}" data-week="${e.weekKey}">Apagar</button>`}</div></div></div>`}).join(""):'<div class="empty">Nenhum lançamento nesta data.</div>'}
     </div>`;
   const form=document.getElementById("entry-form"),kindSelect=document.getElementById("entry-kind"),targetSelect=document.getElementById("entry-model");
   const updateTarget=(selected)=>{
@@ -642,20 +739,23 @@ function renderEntry(){
     const {weekKey,id}=ui.editingEntry,e=data.weeks[weekKey]?.entries.find(x=>x.id===id);
     if(e){document.getElementById("entry-date").value=e.date;document.getElementById("entry-mounting").value=e.mountingId;kindSelect.value=e.kind;updateTarget((e.kind==="palmilha"||e.kind==="solado")?`line:${entryLine(e)}`:e.modelId);document.getElementById("entry-color").value=e.color||"";document.getElementById("entry-unit").value=e.inputUnit||"pairs";document.getElementById("entry-qty").value=e.inputQty||e.qty}
   }
+  const sheetController=setupSheetEntry("entry",()=>{const shared=kindSelect.value==="solado"||kindSelect.value==="palmilha",model=models.find(m=>m.id===targetSelect.value);return{line:shared?targetSelect.value.replace("line:",""):modelLine(targetSelect.value),ref:shared?null:modelRefValue(model),modelId:shared?null:targetSelect.value,kind:kindSelect.value}},()=>updateAssemblyHint(),()=>{submission.snapshot=JSON.stringify(data)});
+  document.getElementById("entry-allow-unknown").onchange=e=>{const field=document.getElementById("entry-color");if(e.target.checked)field.value="Sem cor discriminada";else if(FioriInventory.colorKey(field.value)===FioriInventory.UNKNOWN)field.value=""};
   function updateAssemblyHint(){
     const hint=document.getElementById("entry-assembly-preview");hint.hidden=kindSelect.value!=="finished";
     if(hint.hidden)return;
     if(ui.editingEntry){hint.textContent="Histórico preservado. Produção vinculada a uma conta não pode ser reescrita.";return}
-    try{if(typeof FioriAssembly==="undefined")throw Error("Atualize o app para carregar a montagem a pagar.");const rate=FioriAssembly.resolveRate(data,document.getElementById("entry-mounting").value,document.getElementById("entry-date").value,spDate()),raw=document.getElementById("entry-qty").value,qty=Number(raw)*(document.getElementById("entry-unit").value==="kits"?data.settings.pairsPerKit:1);hint.textContent=Number.isSafeInteger(qty)&&qty>0?`${fmt(qty)} pares × ${money(rate.rateCents/100)} = ${money(qty*rate.rateCents/100)} de montagem pendente. Nenhum pagamento será registrado.`:`Tarifa da produção: ${money(rate.rateCents/100)} por par. Informe os pares para conferir a conta pendente.`}catch(error){hint.textContent=error.message}
+    try{if(typeof FioriAssembly==="undefined")throw Error("Atualize o app para carregar a montagem a pagar.");const rate=FioriAssembly.resolveRate(data,document.getElementById("entry-mounting").value,document.getElementById("entry-date").value,spDate()),raw=document.getElementById("entry-qty").value,qty=Number(raw)*(document.getElementById("entry-unit").value==="kits"?data.settings.pairsPerKit:document.getElementById("entry-unit").value==="sheets"?72:1);hint.textContent=Number.isSafeInteger(qty)&&qty>0?`${fmt(qty)} pares × ${money(rate.rateCents/100)} = ${money(qty*rate.rateCents/100)} de montagem pendente. Nenhum pagamento será registrado.`:`Tarifa da produção: ${money(rate.rateCents/100)} por par. Informe os pares para conferir a conta pendente.`}catch(error){hint.textContent=error.message}
   }
-  kindSelect.onchange=()=>{updateTarget();updateAssemblyHint()};
+  kindSelect.onchange=()=>{updateTarget();sheetController.refresh();updateAssemblyHint()};
+  targetSelect.onchange=()=>{sheetController.refresh();updateAssemblyHint()};
   document.getElementById("entry-mounting").onchange=updateAssemblyHint;
-  document.getElementById("entry-qty").oninput=updateAssemblyHint;
-  document.getElementById("entry-unit").onchange=updateAssemblyHint;
+  document.getElementById("entry-qty").oninput=()=>{sheetController.refresh();updateAssemblyHint()};
+  document.getElementById("entry-unit").onchange=()=>{sheetController.refresh();updateAssemblyHint()};
   updateAssemblyHint();
   form.onsubmit=e=>{e.preventDefault();if(ui.tab!=="entry")return;saveEntry(e,submission)};
   document.getElementById("entry-date").onchange=e=>{ui.editingEntry=null;const keep=e.target.value;renderEntry();document.getElementById("entry-date").value=keep};
-  form.querySelectorAll("[data-quick]").forEach(b=>b.onclick=()=>{const q=document.getElementById("entry-qty"),unit=document.getElementById("entry-unit").value;let add=b.dataset.quick==="kit"?(unit==="kits"?1:data.settings.pairsPerKit):(unit==="kits"?data.settings.pairsPerSheet/data.settings.pairsPerKit:data.settings.pairsPerSheet);q.value=(Number(q.value)||0)+add;updateAssemblyHint();q.focus()});
+  form.querySelectorAll("[data-quick]").forEach(b=>b.onclick=()=>{const q=document.getElementById("entry-qty"),unit=document.getElementById("entry-unit");if(b.dataset.quick==="sheet"){if(ui.editingEntry)return;const raw=q.value.trim(),current=raw?Number(raw):0,factor=unit.value==="kits"?data.settings.pairsPerKit:unit.value==="sheets"?72:1,previousPairs=current*factor;if((raw&&!/^\d+$/.test(raw))||!Number.isSafeInteger(previousPairs)||previousPairs<0||previousPairs%72){showToast("A quantidade atual não fecha fichas de 72 pares. Use um lançamento separado para os avulsos.");return}q.value=previousPairs/72+1;unit.value="sheets"}else{if(unit.value==="sheets"){showToast("Para adicionar kits avulsos, use a unidade Kits e informe a cor.");return}q.value=(Number(q.value)||0)+(unit.value==="kits"?1:data.settings.pairsPerKit)}sheetController.refresh();updateAssemblyHint();q.focus()});
   document.getElementById("cancel-edit")?.addEventListener("click",()=>{ui.editingEntry=null;renderEntry()});
   document.querySelectorAll("[data-edit]").forEach(b=>b.onclick=()=>{ui.editingEntry={id:b.dataset.edit,weekKey:b.dataset.week};renderEntry();window.scrollTo({top:0,behavior:"smooth"})});
   document.querySelectorAll("[data-delete]").forEach(b=>b.onclick=()=>deleteEntry(b.dataset.week,b.dataset.delete));
@@ -666,16 +766,26 @@ function persistCandidate(next,previous=data){
   try{if(save()===false)throw new Error("O salvamento foi recusado.");return true}
   catch(error){data=previous;showToast("O lançamento não foi salvo neste aparelho. Libere espaço ou confira a conexão e tente novamente. "+error.message);return false}
 }
-function assemblyEntryProtected(id){return typeof FioriAssembly!=="undefined"&&FioriAssembly.protectedEntryIds(data).has(id)}
+function assemblyEntryProtected(id){if(Object.values(data.weeks||{}).some(w=>(w.entries||[]).some(e=>e.id===id&&e.sheetBatchId)))return true;return typeof FioriAssembly!=="undefined"&&FioriAssembly.protectedEntryIds(data).has(id)}
 function saveEntry(e,submission=activeEntrySubmission){
   e.preventDefault();
   if(!submission||submission.used||submission.generation!==activeEntrySubmission.generation)return;
-  if(ui.editingEntry&&assemblyEntryProtected(ui.editingEntry.id)){showToast("Este Produto pronto faz parte do histórico protegido. Para corrigir, solicite a revisão do lançamento.");return}const date=document.getElementById("entry-date").value,raw=document.getElementById("entry-qty").value.trim();
+  if(assemblyBusy()){showToast("Aguarde a base online confirmar antes de lançar.");return}
+  if(submission.snapshot&&submission.snapshot!==JSON.stringify(data)){showToast("Os dados mudaram. Reabra o formulário para conferir o lançamento.");return}
+  if(ui.editingEntry&&assemblyEntryProtected(ui.editingEntry.id)){showToast("Este lançamento faz parte de um histórico protegido ou de uma ficha por cores. Para corrigir, solicite a revisão do lançamento.");return}const date=document.getElementById("entry-date").value,raw=document.getElementById("entry-qty").value.trim();
   if(!date){showToast("Escolha a data.");return}
   if(!/^\d+$/.test(raw)||Number(raw)<=0){showToast("Use um número inteiro maior que zero, sem vírgula.");return}
-  const kind=document.getElementById("entry-kind").value,mountingId=document.getElementById("entry-mounting").value,target=document.getElementById("entry-model").value,inputUnit=document.getElementById("entry-unit").value,inputQty=Number(raw),qty=inputUnit==="kits"?inputQty*data.settings.pairsPerKit:inputQty,shared=kind==="palmilha"||kind==="solado",color=document.getElementById("entry-color").value.trim();
+  const kind=document.getElementById("entry-kind").value,mountingId=document.getElementById("entry-mounting").value,target=document.getElementById("entry-model").value,inputUnit=document.getElementById("entry-unit").value,inputQty=Number(raw),qty=inputUnit==="kits"?inputQty*data.settings.pairsPerKit:inputUnit==="sheets"?inputQty*72:inputQty,shared=kind==="palmilha"||kind==="solado",color=document.getElementById("entry-color").value.trim();
+  if(inputUnit==="sheets"){
+    if(ui.editingEntry){showToast("Uma ficha por cores precisa ser registrada como novo lançamento.");return}
+    try{const controller=sheetEditors.get("entry");if(!controller)throw Error("Reabra o formulário para carregar a ficha.");const next=FioriSheets.createProductionBatch(data,{batchId:submission.id,date,kind,mountingId,modelId:shared?undefined:target,line:shared?String(target).replace("line:",""):modelLine(target),sheets:inputQty,rows:controller.rows()},{today:spDate(),now:new Date().toISOString(),inventory:FioriInventory,assembly:FioriAssembly});if(!persistCandidate(next))return;submission.used=true;ui.editingEntry=null;render();showToast("Ficha registrada por cor e numeração. Aguardando confirmação online.")}catch(error){showToast(error.message)}
+    return;
+  }
+  if(!Number.isSafeInteger(qty)||qty<=0){showToast("A quantidade de pares ultrapassa o limite ou não é inteira.");return}
   if(!color){showToast("Informe a cor para controlar o estoque.");return}
+  if(FioriInventory.colorKey(color)===FioriInventory.UNKNOWN&&!document.getElementById("entry-allow-unknown").checked){showToast("Para lançar sem cor, marque explicitamente a opção correspondente.");return}
   const line=shared?String(target).replace("line:",""):modelLine(target),modelId=shared?"":target,modelName=shared?`Linha ${line}`:itemName(data.settings.models,modelId);
+  if(kind==="palmilha"&&line==="300"){showToast("A linha 300 não usa palmilha.");return}
   const editing=ui.editingEntry?data.weeks[ui.editingEntry.weekKey]?.entries.find(x=>x.id===ui.editingEntry.id):null;
   if(ui.editingEntry&&!editing){showToast("Lançamento não encontrado. Reabra a tela antes de salvar.");return}
   if(kind==="finished"&&editing&&editing.kind!=="finished"){showToast("Registre Produto pronto como um novo lançamento. O componente original permanece no histórico.");return}
@@ -695,12 +805,12 @@ function saveEntry(e,submission=activeEntrySubmission){
     const oldWeek=data.weeks[ui.editingEntry.weekKey],idx=oldWeek?.entries.findIndex(x=>x.id===ui.editingEntry.id)??-1;
     if(idx<0){showToast("Lançamento não encontrado.");return}
     const item=oldWeek.entries[idx];oldWeek.entries.splice(idx,1);const newWeek=ensureWeek(weekKeyFor(date));newWeek.entries.push({...item,...candidate,inputUnit,inputQty,mountingName:itemName(data.settings.mountings,mountingId),updatedAt:new Date().toISOString()});ui.editingEntry=null;
-  }else ensureWeek(weekKeyFor(date)).entries.push({id:uid("e"),...candidate,inputUnit,inputQty,mountingName:itemName(data.settings.mountings,mountingId),createdAt:new Date().toISOString()});
+  }else ensureWeek(weekKeyFor(date)).entries.push({id:submission.id||(submission.id=uid("e")),...candidate,inputUnit,inputQty,mountingName:itemName(data.settings.mountings,mountingId),createdAt:new Date().toISOString()});
   if(!persistCandidate(data,previousData)){ui.editingEntry=previousEditing;return}
   submission.used=true;render();showToast("Lançamento registrado. Aguardando confirmação online.");
 }
 function deleteEntry(weekKey,id){
-  if(assemblyEntryProtected(id)){showToast("Este Produto pronto não pode ser apagado por aqui. Para corrigir, solicite a revisão do lançamento.");return}
+  if(assemblyEntryProtected(id)){showToast("Este lançamento protegido não pode ser apagado por aqui. Para corrigir, solicite a revisão do lançamento.");return}
   const e=data.weeks[weekKey]?.entries.find(x=>x.id===id);if(!e)return;
   const missing=stockProblems(id,null);
   if(missing.length){showToast("Não é possível apagar. "+missing[0].message);return}
@@ -749,10 +859,11 @@ function refreshMountingRateAvailability(){
   const notice=document.getElementById("mounting-rate-online-warning");if(notice)notice.hidden=!busy;
 }
 function renderSettings(){
-  invalidateMountingRateDialog();const settingsGeneration=++mountingSettingsGeneration;
+  invalidateMountingRateDialog();invalidateSheetPatternDialog();const settingsGeneration=++mountingSettingsGeneration;
   const models=activeModels(),mountings=activeMountings(),bs=backupStatus(),days=[{n:1,l:"Seg"},{n:2,l:"Ter"},{n:3,l:"Qua"},{n:4,l:"Qui"},{n:5,l:"Sex"},{n:6,l:"Sáb"},{n:0,l:"Dom"}];
   document.getElementById("tab-settings").innerHTML=`
-    <div class="block"><h2>Padrões da fábrica</h2><p class="sub">Esses valores alimentam os botões rápidos e a conversão em fichas.</p><div class="form-grid"><div class="field"><label for="pairs-sheet">Pares por ficha</label><input id="pairs-sheet" inputmode="numeric" value="${data.settings.pairsPerSheet}"></div><div class="field"><label for="pairs-kit">Pares por kit</label><input id="pairs-kit" inputmode="numeric" value="${data.settings.pairsPerKit}"></div></div><button class="btn primary full" id="save-patterns">Salvar padrões</button></div>
+    <div class="block"><h2>Padrões da fábrica</h2><p class="sub">Esses valores alimentam a equivalência de quantidades e o botão de kits. As novas fichas por cor e as metas usam sempre 72 pares.</p><div class="form-grid"><div class="field"><label for="pairs-sheet">Pares por ficha na equivalência</label><input id="pairs-sheet" inputmode="numeric" value="${data.settings.pairsPerSheet}"></div><div class="field"><label for="pairs-kit">Pares por kit</label><input id="pairs-kit" inputmode="numeric" value="${data.settings.pairsPerKit}"></div></div><button class="btn primary full" id="save-patterns">Salvar padrões</button></div>
+    <div class="block"><h2>Fichas de cores e numeração</h2><p class="sub">Cada ficha tem 72 pares. Configure por linha ou referência; mudanças valem somente para novos lançamentos. A Ref.315 e linhas sem grade confirmada precisam de padrão próprio.</p><button class="btn full" id="configure-sheet-pattern">Configurar ficha padrão</button></div>
     <div class="block"><h2>Componentes controlados</h2><p class="sub">Cada par pronto baixa um cabedal do modelo e uma palmilha e um solado da linha correspondente, sempre na mesma montagem.</p><div class="summary-grid">${COMPONENTS.map(c=>`<div class="summary-stat"><strong>${esc(c.name)}</strong><span>controle em pares</span></div>`).join("")}</div></div>
     <div class="block"><h2>Custos por linha</h2><p class="sub">Palmilha e solado são compartilhados por linha. Estes valores são os custos oficiais usados no estoque.</p><div class="settings-list">${Object.entries(data.settings.lineCosts||{}).sort(([a],[b])=>a.localeCompare(b,"pt-BR",{numeric:true})).map(([line,c])=>`<div class="row"><div class="row-top"><strong>Linha ${esc(line)}</strong><span>${c.usesPalmilha===false?"Sem palmilha":""}</span></div><div class="form-grid"><div class="field"><label>Solado / par</label><input inputmode="decimal" data-line-cost="${esc(line)}" data-line-key="solado" value="${Number(c.solado||0).toLocaleString("pt-BR",{minimumFractionDigits:2,maximumFractionDigits:2})}"></div><div class="field"><label>Palmilha / par</label><input inputmode="decimal" data-line-cost="${esc(line)}" data-line-key="palmilha" ${c.usesPalmilha===false?"disabled":""} value="${Number(c.palmilha||0).toLocaleString("pt-BR",{minimumFractionDigits:2,maximumFractionDigits:2})}"></div></div></div>`).join("")}</div><button class="btn primary full" id="save-line-costs">Salvar custos das linhas</button></div>
     <div class="block"><h2>Montagens</h2><p class="sub">A tarifa vale pela data da produção. Cadastre cada mudança com a data inicial confirmada; valores já congelados permanecem preservados.</p><div class="settings-list">${mountings.map((x,i)=>mountingSettingsItem(x,i,mountings.length)).join("")}</div><p class="notice" id="mounting-rate-online-warning" ${assemblyBusy()?"":"hidden"}>Aguarde a base online confirmar os dados ou resolva o conflito para definir uma vigência.</p>${data.settings.mountings.some(x=>x.active===false)?`<details class="mounting-rate-history"><summary>Montagens inativas · somente leitura</summary>${data.settings.mountings.filter(x=>x.active===false).map(x=>mountingSettingsItem(x,0,0,true)).join("")}</details>`:""}<button class="btn full" id="add-mounting">Adicionar montagem</button></div>
@@ -761,6 +872,7 @@ function renderSettings(){
     <div class="block"><h2>Backup</h2><p class="sub">O backup protege os dados se o iPhone for trocado, restaurado ou perder os dados do Safari.</p><div class="button-row"><button class="btn" id="export-backup">Exportar backup</button><button class="btn" id="import-backup">Importar backup</button></div><div class="backup-status ${bs.warn?"warn":""}">${esc(bs.text)}</div></div>
     <div class="block install-help"><h2>Instalar no iPhone</h2><p class="sub">No Safari, toque em Compartilhar e depois em Adicionar à Tela de Início.</p></div>`;
   document.getElementById("save-patterns").onclick=savePatterns;
+  document.getElementById("configure-sheet-pattern").onclick=()=>openSheetPattern();
   document.getElementById("save-line-costs").onclick=saveLineCosts;
   document.getElementById("save-days").onclick=saveDays;
   document.querySelectorAll("[data-name-id]").forEach(i=>i.onchange=()=>renameItem(i.dataset.type,i.dataset.nameId,i.value));
@@ -967,7 +1079,7 @@ function switchTab(tab){
   document.querySelector(".actions").hidden=tab!=="week";render();
 }
 function render(){
-  invalidateMountingRateDialog();ensureWeek();
+  invalidateMountingRateDialog();invalidateSheetPatternDialog();ensureWeek();
   if(ui.tab==="week")renderWeek();
   if(ui.tab==="entry")renderEntry();
   if(ui.tab==="history")renderHistory();
@@ -985,7 +1097,7 @@ document.getElementById("edit-goal").onclick=goalModal;
 document.getElementById("share").onclick=share;
 document.getElementById("backup-file").onchange=e=>{const f=e.target.files?.[0];if(f)importBackup(f)};
 document.getElementById("modal").onclick=e=>{if(e.target.id==="modal"||e.target.closest("[data-modal-close]"))closeModal()};
-document.addEventListener("keydown",e=>{if(e.key==="Tab"&&mountingRateAttempt&&!document.getElementById("modal").hidden){const focusable=[...document.getElementById("modal-sheet").querySelectorAll('button:not([disabled]),input:not([disabled]),select:not([disabled]),[tabindex="0"]')];const first=focusable[0],last=focusable[focusable.length-1];if(e.shiftKey&&document.activeElement===first){e.preventDefault();last?.focus()}else if(!e.shiftKey&&document.activeElement===last){e.preventDefault();first?.focus()}}});
+document.addEventListener("keydown",e=>{if(e.key==="Tab"&&(mountingRateAttempt||goalDialog==="sheet-pattern")&&!document.getElementById("modal").hidden){const focusable=[...document.getElementById("modal-sheet").querySelectorAll('button:not([disabled]),input:not([disabled]),select:not([disabled]),[tabindex="0"]')];const first=focusable[0],last=focusable[focusable.length-1];if(e.shiftKey&&document.activeElement===first){e.preventDefault();last?.focus()}else if(!e.shiftKey&&document.activeElement===last){e.preventDefault();first?.focus()}}});
 document.addEventListener("keydown",e=>{if(e.key==="Escape"&&!document.getElementById("modal").hidden)closeModal()});
 makeIcon();render();
 // Goal onboarding is decided only after authentication and a confirmed online read.
@@ -1061,6 +1173,7 @@ if("serviceWorker" in navigator)navigator.serviceWorker.register("sw.js").catch(
     if(String(ref).startsWith("@line:")){
       const line=String(ref).slice(6),key=sectorById(sector)?.costKey;
       if(sector!=="palmilha"&&sector!=="solado")return{ok:false,message:`${displayRef(ref)} sem referência para aplicar o custo.`};
+      if(sector==="palmilha"&&(line==="300"||data.settings.lineCosts?.[line]?.usesPalmilha===false))return{ok:false,blocked:true,message:"Esta linha não usa palmilha."};
       const value=lineStandardCost(line,key);
       if(Number.isFinite(value))return{ok:true,cost:value,sheet:{ref:displayRef(ref),model:`Componente compartilhado da Linha ${line}`}};
       return{ok:false,message:`Falta custo padrão de ${sectorById(sector)?.name.toLocaleLowerCase("pt-BR")||sector} para a Linha ${line}.`};
@@ -1102,7 +1215,9 @@ if("serviceWorker" in navigator)navigator.serviceWorker.register("sw.js").catch(
     return{bySector,totalKnown,totalPending,positive,issues:state.issues};
   }
 
+  let stockSubmissionGeneration=0;
   function renderStock(){
+    const submission={generation:++stockSubmissionGeneration,id:uid("stkbatch"),used:false,snapshot:JSON.stringify(data)};
     const root=document.getElementById("tab-stock");
     if(!root)return;
     const s=summary();
@@ -1163,9 +1278,11 @@ if("serviceWorker" in navigator)navigator.serviceWorker.register("sw.js").catch(
         </div>
         <div class="field"><label for="stock-color">Cor</label><input id="stock-color" list="stock-colors" placeholder="Ex.: Preto" autocomplete="off"><datalist id="stock-colors"><option value="Sem cor discriminada"><option value="Preto"><option value="Caramelo"><option value="Ouro Light"><option value="Rose"><option value="Off White"></datalist></div>
         <div class="form-grid">
-          <div class="field"><label for="stock-unit">Unidade</label><select id="stock-unit"><option value="pairs">Pares</option><option value="kits">Kits (${stockFmt(data.settings.pairsPerKit)} pares)</option><option value="sheets">Fichas (${stockFmt(data.settings.pairsPerSheet)} pares)</option></select></div>
+          <div class="field"><label for="stock-unit">Unidade</label><select id="stock-unit"><option value="pairs">Pares</option><option value="kits">Kits (${stockFmt(data.settings.pairsPerKit)} pares)</option><option value="sheets">Fichas (72 pares)</option></select></div>
           <div class="field"><label for="stock-qty">Quantidade</label><input id="stock-qty" inputmode="decimal" placeholder="0" autocomplete="off"></div>
         </div>
+        <label class="unknown-choice"><input type="checkbox" id="stock-allow-unknown">Quero registrar sem cor discriminada</label>
+        ${sheetEntryMarkup("stock")}
         <div class="field"><label for="stock-note">Observação opcional</label><input id="stock-note" placeholder="Ex.: saldo físico, recebimento, expedição"></div>
         <div id="stock-cost-hint" class="calc"></div>
         <button class="btn primary full" id="stock-save" type="submit">Salvar movimento</button>
@@ -1176,7 +1293,7 @@ if("serviceWorker" in navigator)navigator.serviceWorker.register("sw.js").catch(
       ${details}
 
       <div class="block"><h2>Ajustes manuais recentes</h2><p class="sub">Últimos 30 ajustes feitos diretamente no estoque. Os movimentos da produção entram automaticamente e não precisam ser repetidos aqui.</p>
-        ${history.length?history.map(m=>`<div class="row"><div class="row-top"><div><span class="name">${m.direction==="out"?"Saída":"Entrada"} · ${esc(sectorById(m.sector)?.name||m.sector)}</span><div class="votes">${fmtDate(m.date)} · Ref. ${esc(m.ref)} · ${esc(normalizeColor(m.color)||"Sem cor")} · ${stockFmt(m.qty)} pares${m.note?` · ${esc(m.note)}`:""}</div></div><button class="icon-btn danger" type="button" data-stock-delete="${esc(m.id)}">Apagar</button></div></div>`).join(""):'<div class="empty">Nenhum movimento lançado.</div>'}
+        ${history.length?history.map(m=>`<div class="row"><div class="row-top"><div><span class="name">${m.direction==="out"?"Saída":"Entrada"} · ${esc(sectorById(m.sector)?.name||m.sector)}</span><div class="votes">${fmtDate(m.date)} · Ref. ${esc(m.ref)} · ${esc(normalizeColor(m.color)||"Sem cor")} · ${stockFmt(m.qty)} pares${esc(recordedSizeText(m))}${m.sheetBatchId?" · ficha por cores":""}${m.note?` · ${esc(m.note)}`:""}</div></div><button class="icon-btn danger" type="button" data-stock-delete="${esc(m.id)}">Apagar</button></div></div>`).join(""):'<div class="empty">Nenhum movimento lançado.</div>'}
       </div>
 
       <div class="block"><h2>Custos das fichas</h2><p class="sub">Catálogo incorporado a partir da base “Referências e Custos” do Registro Operacional.</p>
@@ -1203,7 +1320,7 @@ if("serviceWorker" in navigator)navigator.serviceWorker.register("sw.js").catch(
     function qtyPairs(){
       const q=parseQty(qtyEl.value);
       if(!Number.isFinite(q)||q<=0)return NaN;
-      const factor=unitEl.value==="kits"?(Number(data.settings.pairsPerKit)||6):unitEl.value==="sheets"?(Number(data.settings.pairsPerSheet)||72):1;
+      const factor=unitEl.value==="kits"?(Number(data.settings.pairsPerKit)||6):unitEl.value==="sheets"?72:1;
       return q*factor;
     }
     function refreshHint(){
@@ -1217,15 +1334,20 @@ if("serviceWorker" in navigator)navigator.serviceWorker.register("sw.js").catch(
         hint.innerHTML=`Custo unitário deste setor: <strong>${stockMoney(ci.cost)}</strong>`;
       }
     }
-    sectorEl.onchange=()=>{refreshStockTarget();refreshHint()};
-    refEl.onchange=refreshHint;
-    qtyEl.oninput=refreshHint;
-    unitEl.onchange=refreshHint;
     refreshStockTarget();
+    const sheetController=setupSheetEntry("stock",()=>({line:refEl.value.startsWith('@line:')?refEl.value.slice(6):String(refEl.value).slice(0,1)+'00',ref:['solado','palmilha'].includes(sectorEl.value)?null:refEl.value,kind:sectorEl.value}),refreshHint,()=>{submission.snapshot=JSON.stringify(data)});
+    document.getElementById("stock-allow-unknown").onchange=e=>{const field=document.getElementById("stock-color");if(e.target.checked)field.value="Sem cor discriminada";else if(FioriInventory.colorKey(field.value)===FioriInventory.UNKNOWN)field.value=""};
+    sectorEl.onchange=()=>{refreshStockTarget();sheetController.refresh();refreshHint()};
+    refEl.onchange=()=>{sheetController.refresh();refreshHint()};
+    qtyEl.oninput=()=>{sheetController.refresh();refreshHint()};
+    unitEl.onchange=()=>{sheetController.refresh();refreshHint()};
     refreshHint();
 
     form.onsubmit=e=>{
       e.preventDefault();
+      if(submission.used||submission.generation!==stockSubmissionGeneration||ui.tab!=="stock")return;
+      if(assemblyBusy()){showToast("Aguarde a base online confirmar antes de lançar.");return}
+      if(submission.snapshot!==JSON.stringify(data)){showToast("Os dados mudaram. Reabra Estoque para conferir o lançamento.");return}
       const date=document.getElementById("stock-date").value;
       const direction=document.getElementById("stock-direction").value;
       const sector=sectorEl.value;
@@ -1235,7 +1357,12 @@ if("serviceWorker" in navigator)navigator.serviceWorker.register("sw.js").catch(
       const pairs=qtyPairs();
       const ci=costInfo(sector,ref);
       if(!date){showToast("Escolha a data.");return}
+      if(unitEl.value==="sheets"){
+        if(ci.blocked){showToast(ci.message);return}
+        try{const next=FioriSheets.createStockBatch(data,{batchId:submission.id,date,direction,sector,ref,sheets:sheetController.sheets(),rows:sheetController.rows(),note},{today:spDate(),now:new Date().toISOString(),inventory:FioriInventory});if(!persistCandidate(next))return;submission.used=true;renderStock();showToast("Ficha registrada por cor e numeração. Aguardando confirmação online.")}catch(error){showToast(error.message)}return;
+      }
       if(!color){showToast("Informe a cor.");return}
+      if(FioriInventory.colorKey(color)===FioriInventory.UNKNOWN&&!document.getElementById("stock-allow-unknown").checked){showToast("Para lançar sem cor, marque explicitamente a opção correspondente.");return}
       if(!Number.isFinite(pairs)||pairs<=0||Math.abs(pairs-Math.round(pairs))>.000001){showToast("A quantidade precisa resultar em um número inteiro de pares.");return}
       if(ci.blocked){showToast(ci.message);return}
       const qty=Math.round(pairs);
@@ -1243,17 +1370,17 @@ if("serviceWorker" in navigator)navigator.serviceWorker.register("sw.js").catch(
         const current=balances().find(x=>itemKey(x.sector,x.ref,x.color)===itemKey(sector,ref,color))?.qty||0;
         if(qty>current){showToast(`Saldo insuficiente: há ${stockFmt(current)} pares neste item.`);return}
       }
-      const movement={id:uid("stk"),date,direction,sector,ref,color,qty,note,createdAt:new Date().toISOString()};
+      const movement={id:submission.id,date,direction,sector,ref,color,qty,note,createdAt:new Date().toISOString()};
       const problems=FioriInventory.validate({...data,stockLedger:[...(data.stockLedger||[]),movement]});
       if(problems.length){showToast(problems[0].message);return}
-      data.stockLedger.push(movement);
-      save();renderStock();showToast("Movimento registrado. Aguardando confirmação online.");
+      if(!persistCandidate({...data,stockLedger:[...(data.stockLedger||[]),movement]}))return;submission.used=true;renderStock();showToast("Movimento registrado. Aguardando confirmação online.");
     };
 
     document.querySelectorAll("[data-stock-delete]").forEach(btn=>btn.onclick=()=>{
       const id=btn.dataset.stockDelete;
       const movement=data.stockLedger.find(x=>x.id===id);
       if(!movement)return;
+      if(movement.sheetBatchId){showToast("Este movimento faz parte de uma ficha por cores. A correção exige revisão do lote completo.");return}
       const problems=FioriInventory.validate({...data,stockLedger:data.stockLedger.filter(x=>x.id!==id)});
       if(problems.length){showToast("Não é possível apagar. "+problems[0].message);return}
       confirmAction({title:"Apagar movimento?",message:`${movement.direction==="out"?"Saída":"Entrada"} de ${stockFmt(movement.qty)} pares da Ref. ${movement.ref} · ${movement.color}.`,confirmText:"Apagar",danger:true,onConfirm:()=>{
@@ -1264,7 +1391,7 @@ if("serviceWorker" in navigator)navigator.serviceWorker.register("sw.js").catch(
 
   const oldRender=render;
   render=function(){
-    invalidateMountingRateDialog();if(ui.tab==="stock"){ensureWeek();renderStock();return}
+    invalidateMountingRateDialog();invalidateSheetPatternDialog();if(ui.tab==="stock"){ensureWeek();renderStock();return}
     oldRender();
   };
 
@@ -1537,7 +1664,7 @@ if("serviceWorker" in navigator)navigator.serviceWorker.register("sw.js").catch(
   }
 
   const previousRender=render;
-  render=function(){invalidateMountingRateDialog();if(ui.tab==="expenses"){ensureWeek();renderExpenses();return}previousRender()};
+  render=function(){invalidateMountingRateDialog();invalidateSheetPatternDialog();if(ui.tab==="expenses"){ensureWeek();renderExpenses();return}previousRender()};
   switchTab=function(tab){
     ui.tab=tab;
     document.querySelectorAll("nav [role=tab]").forEach(b=>b.setAttribute("aria-selected",b.dataset.tab===tab));
@@ -1689,7 +1816,7 @@ if("serviceWorker" in navigator)navigator.serviceWorker.register("sw.js").catch(
     document.querySelectorAll("[data-sales-receipt]").forEach(b=>b.onclick=()=>{const order=data.salesControl.orders.find(x=>x.id===b.dataset.salesReceipt);if(order)openReceipt(order);else showToast("Pedido não encontrado. Abra a aba Pedidos novamente.")});
   }
   const prevRenderSales=render;
-  render=function(){invalidateMountingRateDialog();if(ui.tab==="sales"){ensureWeek();renderSales();return}prevRenderSales()};
+  render=function(){invalidateMountingRateDialog();invalidateSheetPatternDialog();if(ui.tab==="sales"){ensureWeek();renderSales();return}prevRenderSales()};
   const prevSwitchSales=switchTab;
   switchTab=function(tab){prevSwitchSales(tab);if(tab==="sales"){["week","stock","expenses","sales","entry","history","settings"].forEach(k=>{const el=document.getElementById("tab-"+k);if(el)el.hidden=k!==tab});renderSales()}};
   document.querySelectorAll('nav [role=tab]').forEach(b=>b.onclick=()=>switchTab(b.dataset.tab));
