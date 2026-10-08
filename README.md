@@ -89,3 +89,16 @@ O formulário bloqueia pendência, conflito, sessão ainda não carregada, dados
 O resumo semanal e o texto de compartilhamento somam cada Produto pronto pela sua tarifa congelada em `assemblyRate`, ou pela tarifa numérica legada em `mountingRate`. Sem tarifa salva no lançamento, os valores projetados ficam explicitamente separados como estimativas; sem referência calculável, os pares ficam sem valor e pedem conferência. Essa consulta nunca gera despesa, dívida, pagamento ou histórico. Valores inválidos e limites de precisão não viram zero silenciosamente.
 
 O cache do aplicativo passou a v31. Os testes usam apenas dados sintéticos, incluindo mudanças de tarifa no meio da semana, fronteiras de vigência, datas futuras, legado, cancelamento, repetição, sincronização e falhas de salvamento. A validação visual em navegador permanece pendente: o Chromium local não pôde iniciar devido à restrição de socket do ambiente.
+
+
+## Meta por referência — r8.4
+
+Editar meta oferece fichas de 72 pares por modelo e pares avulsos de 0 a 71 para preservar metas legadas não múltiplas de uma ficha. A soma do plano deve coincidir com a meta total; o botão “Usar a soma como meta total” muda apenas o formulário. O armazenamento continua nos campos existentes `weeks[semana].goal` e `modelGoals`, em pares. Metas de modelos inativos ou antigos continuam editáveis e não são omitidas. Não há migração ou mudança automática na base ao abrir esta versão.
+
+A validação termina antes de alterar o estado. Falha de persistência desfaz o candidato; fila durável continua protegida quando somente o cache falha. A tela bloqueia pendência, sessão não carregada, conflito, callback antigo, fechamento, outro modal, troca de semana, duplo clique e alteração dos dados enquanto o editor está aberto. Sem confirmação online, o texto informa que o salvamento ainda está pendente.
+
+No Início, cada referência do plano mostra meta, produto pronto produzido na semana, saldo de cabedais em montagem e falta cortar. Falta cortar = máximo(meta − produção pronta da semana − saldo geral de cabedal, 0). O saldo geral já contém o das montagens e já desconta os retornos de Produto pronto. Cabedal fora da montagem aparece separadamente, sem ser somado novamente. Cabedal antigo ainda disponível pode atender ao corte; produto pronto antigo não reduz a meta de produção nova. Solados e palmilhas compartilhados não são contados como cabedal.
+
+O resultado é uma estimativa por quantidade: não faz reserva para pedidos, não garante disponibilidade física, cores, numeração nem grade completa de fichas. Erros de estoque, meta inválida, referência ambígua ou saldo incoerente suspendem a estimativa, mostrando “A conferir”. Sem plano, não é inferida uma distribuição. Semanas arquivadas continuam somente leitura e preservam seus snapshots.
+
+O cache passa a v32. Os testes sintéticos cobrem conversão, sobras, soma, limites, estoque antigo, cabedal externo, retorno sem duplicação, materiais compartilhados, datas, inconsistência, histórico, cancelamento, repetição, concorrência e falhas de salvamento. O Chromium deste executor não iniciou devido à restrição de socket, inclusive na tentativa de execução com permissões ampliadas; a inspeção visual desta versão não foi concluída.
