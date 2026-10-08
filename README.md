@@ -54,3 +54,25 @@ Nenhuma estrutura ou registro da base online foi migrado nesta correção. A rec
 `tests/meta-login.test.js` executa o fluxo de autenticação e sincronização com Supabase simulado e dados fictícios, sem rede nem acesso à base real. Inclui aparelho novo, sessão existente, leitura lenta/falha, meta já existente, semana nova, cliques repetidos, fechamento da janela, logout, atualizações concorrentes, respostas antigas, restauração de pendências e falhas de recuperação. Execute junto aos demais testes:
 
     node --test tests/*.test.js
+
+
+## Montagem a pagar (r8.2)
+
+Novos lançamentos de Produto pronto usam `assembly-finance.js` para criar a entrada de produção e uma obrigação de mão de obra pendente em um único estado. O guard de estoque continua validando esse estado antes de qualquer salvamento. O bruto é congelado pela tarifa da data da produção. Sem vigência histórica confirmada, o valor atual é aceito apenas para produção do próprio dia em São Paulo; uma produção retroativa exige tarifa datada.
+
+O painel Montagem a pagar seleciona contas pendentes de um montador, abate automaticamente os adiantamentos disponíveis por data/ID e mostra bruto, abatimento e líquido. Somente a confirmação de um acerto já realizado marca as obrigações como pagas e registra a saída líquida. O registro não transfere dinheiro. Acerto sem adiantamento é válido no novo caminho; acerto integralmente coberto não cria saída de valor zero. O formulário de acerto avulso legado mantém suas regras anteriores.
+
+Custo lançado/quitado e Pago no caixa são projeções distintas. Obrigações de produção representam o custo bruto; adiantamentos e pagamentos líquidos representam as saídas de caixa. O bruto quitado não é somado novamente ao caixa. Acertos legados sem vínculo não inventam custos históricos de produção.
+
+Limitações de preservação explícitas:
+- Não há geração retroativa de contas ao abrir o app. Produções antigas permanecem fora das novas obrigações.
+- Ao ativar o recurso, Produtos prontos existentes e os novos vinculados ficam protegidos contra edição/exclusão. A interface orienta solicitar revisão específica quando houver correção; não há estorno automático.
+- Componentes não podem ser transformados em Produto pronto pela edição do mesmo registro; o produto deve ser lançado como um novo movimento.
+- Um novo acerto de montagem por salvamento, sem misturar acerto avulso no mesmo pacote. A seleção pode conter várias obrigações; o abatimento é automático até o menor valor entre bruto e saldo elegível.
+- Não há garantia de simultaneidade entre o sistema online e serviços externos. O estado online é a referência operacional.
+
+Os novos fluxos bloqueiam duplo clique, callback antigo, data sem tarifa, estoque insuficiente, alteração durante a confirmação, pendência e conflito. A fila local é persistida antes do cache. Falha sem gravação durável reverte o estado em memória; se a fila foi gravada mas o cache falhou, a intenção permanece pendente e recuperável. O último envio fica registrado na fila para reconhecer por leitura um commit cuja resposta foi perdida, inclusive após recarga, sem sobrescrever uma intenção local posterior. Comparação de estado ignora somente a ordem de chaves de objetos JSON; a ordem de arrays é preservada.
+
+### Compatibilidade de implantação
+
+A versão r8.2 depende das guardas financeiras correspondentes no banco. A implantação das guardas é uma operação administrativa separada, revisada e autorizada, após backup conferido. Ela não cria produção, gastos, pagamentos, tarifas nem histórico retroativo. Clientes anteriores precisam atualizar para lançar novos produtos prontos com as obrigações correspondentes.

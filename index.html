@@ -214,7 +214,7 @@ footer{color:var(--soft);font-size:.78rem;text-align:center;padding:8px 0 24px}
     <button class="btn" id="edit-goal" type="button">Editar meta</button>
     <button class="btn primary" id="share" type="button">Compartilhar resumo</button>
   </div>
-  <footer id="app-footer">Base online Fiori Belle · sincronização automática · v2026.10.08-r8.1</footer>
+  <footer id="app-footer">Base online Fiori Belle · sincronização automática · v2026.10.08-r8.2</footer>
 </div>
 
 <div class="toast" id="toast" hidden role="status" aria-live="polite"></div>
@@ -229,6 +229,7 @@ footer{color:var(--soft);font-size:.78rem;text-align:center;padding:8px 0 24px}
 <script src="sales-order.js?v=28"></script>
 <script src="order-fulfillment.js?v=28"></script>
 <script src="finance-preview.js?v=28"></script>
+<script src="assembly-finance.js?v=30"></script>
 <script>
 "use strict";
 const STORAGE_KEY="acompanhar_producao_v2";
@@ -258,9 +259,9 @@ let ui={tab:"week",viewWeek:null,editingEntry:null};
 let toastTimer=null,goalDialog=null,goalDialogVersion=0;
 
 function clone(v){return JSON.parse(JSON.stringify(v))}
-function loadData(){
+function loadData(source){
   try{
-    const raw=JSON.parse(localStorage.getItem(STORAGE_KEY)||"null");
+    const raw=source===undefined?JSON.parse(localStorage.getItem(STORAGE_KEY)||"null"):clone(source);
     if(!raw||typeof raw!=="object")return clone(DEFAULTS);
     const merged={...clone(DEFAULTS),...raw,settings:{...clone(DEFAULTS.settings),...(raw.settings||{})},weeks:raw.weeks||{}};
     merged.settings.models=normalizeItems(merged.settings.models,DEFAULTS.settings.models);
@@ -439,7 +440,8 @@ function showModal(html,kind=null){goalDialog=kind;goalDialogVersion++;document.
 function closeModal(){goalDialog=null;goalDialogVersion++;document.getElementById("modal").hidden=true;document.getElementById("modal-sheet").innerHTML=""}
 function confirmAction({title,message,confirmText="Confirmar",danger=false,onConfirm}){
   showModal(`<h2 id="modal-title">${esc(title)}</h2><p>${esc(message)}</p><div class="button-row"><button class="btn" data-modal-close>Cancelar</button><button class="btn ${danger?"danger":"primary"}" id="modal-confirm">${esc(confirmText)}</button></div>`);
-  document.getElementById("modal-confirm").onclick=()=>{closeModal();onConfirm()};
+  const dialogVersion=goalDialogVersion;let used=false;
+  document.getElementById("modal-confirm").onclick=()=>{if(used||dialogVersion!==goalDialogVersion||document.getElementById("modal").hidden)return;used=true;closeModal();onConfirm()};
 }
 function goalModal(){
   if(!window.fioriOnline?.canEditGoal?.()){showToast("Entre e aguarde a confirmação da base online antes de editar a meta.");return}
@@ -559,7 +561,10 @@ function entriesForDate(date){
   const found=[];for(const [key,w] of Object.entries(data.weeks))for(const e of w.entries||[])if(e.date===date)found.push({...e,weekKey:key});
   return found.sort((a,b)=>String(b.createdAt).localeCompare(String(a.createdAt)));
 }
+let entrySubmissionGeneration=0;
+let activeEntrySubmission={generation:0,id:null,used:false};
 function renderEntry(){
+  const submission={generation:++entrySubmissionGeneration,id:uid("e"),used:false};activeEntrySubmission=submission;
   const date=document.getElementById("entry-date")?.value||spDate(),models=activeModels(),mountings=activeMountings(),entries=entriesForDate(date);
   document.getElementById("tab-entry").innerHTML=`
     <form class="block" id="entry-form"><h2>${ui.editingEntry?"Editar lançamento":"Novo lançamento"}</h2><p class="sub">Cabedal é controlado por referência. Palmilha e solado são saldos compartilhados por linha: qualquer modelo da mesma linha pode consumir esses componentes.</p>
@@ -568,11 +573,13 @@ function renderEntry(){
       <div class="form-grid"><div class="field"><label for="entry-kind">O que está entrando</label><select id="entry-kind">${COMPONENTS.map(c=>`<option value="${c.id}">${esc(c.name)}</option>`).join("")}<option value="finished">Produto pronto</option></select></div><div class="field"><label for="entry-model" id="entry-target-label">Modelo</label><select id="entry-model"></select></div></div>
       <div class="field"><label for="entry-color">Cor</label><input id="entry-color" list="entry-colors" placeholder="Cor ou Sem cor discriminada" autocomplete="off"><datalist id="entry-colors"><option value="Sem cor discriminada"><option value="Preto"><option value="Caramelo"><option value="Ouro Light"><option value="Rose"><option value="Off White"></datalist></div>
       <div class="form-grid"><div class="field"><label for="entry-unit">Unidade</label><select id="entry-unit"><option value="pairs">Pares</option><option value="kits">Kits de ${fmt(data.settings.pairsPerKit)} pares</option></select></div><div class="field"><label for="entry-qty">Quantidade</label><input id="entry-qty" inputmode="numeric" pattern="[0-9]*" placeholder="0" autocomplete="off"></div></div>
+      <div class="calc" id="entry-assembly-preview" role="status" aria-live="polite" hidden></div>
       <div class="quick"><button type="button" data-quick="kit">+1 kit</button><button type="button" data-quick="sheet">+1 ficha (${fmt(data.settings.pairsPerSheet)})</button></div>
       <div class="button-row">${ui.editingEntry?'<button type="button" class="btn" id="cancel-edit">Cancelar</button>':""}<button class="btn primary" type="submit">${ui.editingEntry?"Salvar alteração":"Adicionar lançamento"}</button></div>
     </form>
+    ${data.assemblyControl?'<div class="notice">Produtos prontos anteriores e os vinculados à montagem a pagar ficam protegidos contra edição e exclusão. Para corrigir data, pares ou montador, solicite a revisão do lançamento, preservando estoque e acertos.</div>':""}
     <div class="block"><h2>Lançamentos do dia</h2><p class="sub">${fmtDate(date)} · ${entries.reduce((a,e)=>a+Number(e.qty||0),0).toLocaleString("pt-BR")} pares movimentados</p>
-      ${entries.length?entries.map(e=>{const shared=e.kind==="palmilha"||e.kind==="solado",target=shared?`Linha ${entryLine(e)}`:`Modelo ${e.modelName||itemName(data.settings.models,e.modelId)}`;return `<div class="row"><div class="row-top"><div class="entry-main"><div class="entry-title">${esc(e.mountingName||itemName(data.settings.mountings,e.mountingId,"Montagem"))} · ${esc(target)}</div><div class="entry-meta">${esc(e.kind==="finished"?"Produto pronto":COMPONENTS.find(c=>c.id===e.kind)?.name||"Componente")} · ${esc(e.color||"Sem cor")} · ${e.inputUnit==="kits"?`${fmt(e.inputQty)} kits · `:""}${fmt(e.qty)} pares${e.kind==="finished"?" · baixa automática":""}</div></div><div class="entry-actions"><button class="icon-btn" data-edit="${e.id}" data-week="${e.weekKey}">Editar</button><button class="icon-btn danger" data-delete="${e.id}" data-week="${e.weekKey}">Apagar</button></div></div></div>`}).join(""):'<div class="empty">Nenhum lançamento nesta data.</div>'}
+      ${entries.length?entries.map(e=>{const shared=e.kind==="palmilha"||e.kind==="solado",target=shared?`Linha ${entryLine(e)}`:`Modelo ${e.modelName||itemName(data.settings.models,e.modelId)}`;return `<div class="row"><div class="row-top"><div class="entry-main"><div class="entry-title">${esc(e.mountingName||itemName(data.settings.mountings,e.mountingId,"Montagem"))} · ${esc(target)}</div><div class="entry-meta">${esc(e.kind==="finished"?"Produto pronto":COMPONENTS.find(c=>c.id===e.kind)?.name||"Componente")} · ${esc(e.color||"Sem cor")} · ${e.inputUnit==="kits"?`${fmt(e.inputQty)} kits · `:""}${fmt(e.qty)} pares${e.kind==="finished"?" · baixa automática":""}</div></div><div class="entry-actions">${assemblyEntryProtected(e.id)?'<span class="sub">Histórico protegido</span>':`<button class="icon-btn" data-edit="${e.id}" data-week="${e.weekKey}">Editar</button><button class="icon-btn danger" data-delete="${e.id}" data-week="${e.weekKey}">Apagar</button>`}</div></div></div>`}).join(""):'<div class="empty">Nenhum lançamento nesta data.</div>'}
     </div>`;
   const form=document.getElementById("entry-form"),kindSelect=document.getElementById("entry-kind"),targetSelect=document.getElementById("entry-model");
   const updateTarget=(selected)=>{
@@ -593,31 +600,65 @@ function renderEntry(){
     const {weekKey,id}=ui.editingEntry,e=data.weeks[weekKey]?.entries.find(x=>x.id===id);
     if(e){document.getElementById("entry-date").value=e.date;document.getElementById("entry-mounting").value=e.mountingId;kindSelect.value=e.kind;updateTarget((e.kind==="palmilha"||e.kind==="solado")?`line:${entryLine(e)}`:e.modelId);document.getElementById("entry-color").value=e.color||"";document.getElementById("entry-unit").value=e.inputUnit||"pairs";document.getElementById("entry-qty").value=e.inputQty||e.qty}
   }
-  kindSelect.onchange=()=>updateTarget();
-  form.onsubmit=saveEntry;
+  function updateAssemblyHint(){
+    const hint=document.getElementById("entry-assembly-preview");hint.hidden=kindSelect.value!=="finished";
+    if(hint.hidden)return;
+    if(ui.editingEntry){hint.textContent="Histórico preservado. Produção vinculada a uma conta não pode ser reescrita.";return}
+    try{if(typeof FioriAssembly==="undefined")throw Error("Atualize o app para carregar a montagem a pagar.");const rate=FioriAssembly.resolveRate(data,document.getElementById("entry-mounting").value,document.getElementById("entry-date").value,spDate()),raw=document.getElementById("entry-qty").value,qty=Number(raw)*(document.getElementById("entry-unit").value==="kits"?data.settings.pairsPerKit:1);hint.textContent=Number.isSafeInteger(qty)&&qty>0?`${fmt(qty)} pares × ${money(rate.rateCents/100)} = ${money(qty*rate.rateCents/100)} de montagem pendente. Nenhum pagamento será registrado.`:`Tarifa da produção: ${money(rate.rateCents/100)} por par. Informe os pares para conferir a conta pendente.`}catch(error){hint.textContent=error.message}
+  }
+  kindSelect.onchange=()=>{updateTarget();updateAssemblyHint()};
+  document.getElementById("entry-mounting").onchange=updateAssemblyHint;
+  document.getElementById("entry-qty").oninput=updateAssemblyHint;
+  document.getElementById("entry-unit").onchange=updateAssemblyHint;
+  updateAssemblyHint();
+  form.onsubmit=e=>{e.preventDefault();if(ui.tab!=="entry")return;saveEntry(e,submission)};
   document.getElementById("entry-date").onchange=e=>{ui.editingEntry=null;const keep=e.target.value;renderEntry();document.getElementById("entry-date").value=keep};
-  form.querySelectorAll("[data-quick]").forEach(b=>b.onclick=()=>{const q=document.getElementById("entry-qty"),unit=document.getElementById("entry-unit").value;let add=b.dataset.quick==="kit"?(unit==="kits"?1:data.settings.pairsPerKit):(unit==="kits"?data.settings.pairsPerSheet/data.settings.pairsPerKit:data.settings.pairsPerSheet);q.value=(Number(q.value)||0)+add;q.focus()});
+  form.querySelectorAll("[data-quick]").forEach(b=>b.onclick=()=>{const q=document.getElementById("entry-qty"),unit=document.getElementById("entry-unit").value;let add=b.dataset.quick==="kit"?(unit==="kits"?1:data.settings.pairsPerKit):(unit==="kits"?data.settings.pairsPerSheet/data.settings.pairsPerKit:data.settings.pairsPerSheet);q.value=(Number(q.value)||0)+add;updateAssemblyHint();q.focus()});
   document.getElementById("cancel-edit")?.addEventListener("click",()=>{ui.editingEntry=null;renderEntry()});
   document.querySelectorAll("[data-edit]").forEach(b=>b.onclick=()=>{ui.editingEntry={id:b.dataset.edit,weekKey:b.dataset.week};renderEntry();window.scrollTo({top:0,behavior:"smooth"})});
   document.querySelectorAll("[data-delete]").forEach(b=>b.onclick=()=>deleteEntry(b.dataset.week,b.dataset.delete));
 }
-function saveEntry(e){
-  e.preventDefault();const date=document.getElementById("entry-date").value,raw=document.getElementById("entry-qty").value.trim();
+function assemblyBusy(){const online=window.fioriOnline;return !!(online?.hasPending?.()||online?.conflict?.()||(online?.onlineMode&&!online?.canEditGoal?.()))}
+function persistCandidate(next,previous=data){
+  data=next;
+  try{if(save()===false)throw new Error("O salvamento foi recusado.");return true}
+  catch(error){data=previous;showToast("O lançamento não foi salvo neste aparelho. Libere espaço ou confira a conexão e tente novamente. "+error.message);return false}
+}
+function assemblyEntryProtected(id){return typeof FioriAssembly!=="undefined"&&FioriAssembly.protectedEntryIds(data).has(id)}
+function saveEntry(e,submission=activeEntrySubmission){
+  e.preventDefault();
+  if(!submission||submission.used||submission.generation!==activeEntrySubmission.generation)return;
+  if(ui.editingEntry&&assemblyEntryProtected(ui.editingEntry.id)){showToast("Este Produto pronto faz parte do histórico protegido. Para corrigir, solicite a revisão do lançamento.");return}const date=document.getElementById("entry-date").value,raw=document.getElementById("entry-qty").value.trim();
   if(!date){showToast("Escolha a data.");return}
   if(!/^\d+$/.test(raw)||Number(raw)<=0){showToast("Use um número inteiro maior que zero, sem vírgula.");return}
   const kind=document.getElementById("entry-kind").value,mountingId=document.getElementById("entry-mounting").value,target=document.getElementById("entry-model").value,inputUnit=document.getElementById("entry-unit").value,inputQty=Number(raw),qty=inputUnit==="kits"?inputQty*data.settings.pairsPerKit:inputQty,shared=kind==="palmilha"||kind==="solado",color=document.getElementById("entry-color").value.trim();
   if(!color){showToast("Informe a cor para controlar o estoque.");return}
   const line=shared?String(target).replace("line:",""):modelLine(target),modelId=shared?"":target,modelName=shared?`Linha ${line}`:itemName(data.settings.models,modelId);
+  const editing=ui.editingEntry?data.weeks[ui.editingEntry.weekKey]?.entries.find(x=>x.id===ui.editingEntry.id):null;
+  if(ui.editingEntry&&!editing){showToast("Lançamento não encontrado. Reabra a tela antes de salvar.");return}
+  if(kind==="finished"&&editing&&editing.kind!=="finished"){showToast("Registre Produto pronto como um novo lançamento. O componente original permanece no histórico.");return}
   const candidate={kind,mountingId,modelId,modelName,line,qty,date,color},missing=candidateStockProblems(ui.editingEntry?.id,candidate);
   if(missing.length){showToast(missing[0].message);return}
-  if(ui.editingEntry){
+  const previousData=clone(data),previousEditing=ui.editingEntry?clone(ui.editingEntry):null;
+  if(kind==="finished"&&!editing){
+    if(assemblyBusy()){showToast("Aguarde a confirmação online antes de lançar outra produção.");return}
+    if(typeof FioriAssembly==="undefined"){showToast("Atualize o app para carregar a montagem a pagar.");return}
+    try{
+      const now=new Date().toISOString(),entry={...(editing||{}),id:editing?.id||(submission.id||(submission.id=uid("e"))),...candidate,inputUnit,inputQty,mountingName:itemName(data.settings.mountings,mountingId),createdAt:editing?.createdAt||now};
+      const next=FioriAssembly.createFinished(data,entry,{today:spDate(),now});
+      const problems=FioriInventory.validate(next);if(problems.length)throw new Error(problems[0].message);
+      data=next;ui.editingEntry=null;
+    }catch(error){showToast(error.message);return}
+  }else if(ui.editingEntry){
     const oldWeek=data.weeks[ui.editingEntry.weekKey],idx=oldWeek?.entries.findIndex(x=>x.id===ui.editingEntry.id)??-1;
     if(idx<0){showToast("Lançamento não encontrado.");return}
     const item=oldWeek.entries[idx];oldWeek.entries.splice(idx,1);const newWeek=ensureWeek(weekKeyFor(date));newWeek.entries.push({...item,...candidate,inputUnit,inputQty,mountingName:itemName(data.settings.mountings,mountingId),updatedAt:new Date().toISOString()});ui.editingEntry=null;
   }else ensureWeek(weekKeyFor(date)).entries.push({id:uid("e"),...candidate,inputUnit,inputQty,mountingName:itemName(data.settings.mountings,mountingId),createdAt:new Date().toISOString()});
-  save();render();showToast("Lançamento registrado. Aguardando confirmação online.");
+  if(!persistCandidate(data,previousData)){ui.editingEntry=previousEditing;return}
+  submission.used=true;render();showToast("Lançamento registrado. Aguardando confirmação online.");
 }
 function deleteEntry(weekKey,id){
+  if(assemblyEntryProtected(id)){showToast("Este Produto pronto não pode ser apagado por aqui. Para corrigir, solicite a revisão do lançamento.");return}
   const e=data.weeks[weekKey]?.entries.find(x=>x.id===id);if(!e)return;
   const missing=stockProblems(id,null);
   if(missing.length){showToast("Não é possível apagar. "+missing[0].message);return}
@@ -1153,6 +1194,11 @@ if("serviceWorker" in navigator)navigator.serviceWorker.register("sw.js").catch(
     return data.factoryExpenses.filter(x=>monthKey(x.date)===month).sort((a,b)=>String(b.date).localeCompare(String(a.date))||String(b.createdAt||"").localeCompare(String(a.createdAt||"")));
   }
   function expenseSummary(month){
+    if(data.assemblyControl&&typeof FioriAssembly!=="undefined"){
+      try{const s=FioriAssembly.expenseSummary(data,month);
+        return {...s,total:s.totalCents/100,paid:s.paidCents/100,pending:s.pendingCents/100,withdrawals:s.withdrawalsCents/100,cashPaid:s.cashPaidCents/100,byCategory:Object.fromEntries(Object.entries(s.byCategoryCents).map(([k,v])=>[k,v/100])),assemblyAccounting:true};
+      }catch(error){return {rows:expensesForMonth(month),expenseRows:[],withdrawalRows:[],byCategory:{},accountingIssue:error.message,assemblyAccounting:true}}
+    }
     const rows=expensesForMonth(month);
     const expenseRows=rows.filter(x=>x.category!=="Pró-labore/Retirada");
     const withdrawalRows=rows.filter(x=>x.category==="Pró-labore/Retirada");
@@ -1169,7 +1215,8 @@ if("serviceWorker" in navigator)navigator.serviceWorker.register("sw.js").catch(
   const advanceExpense=a=>data.factoryExpenses.find(x=>x.id===a.expenseId);
   const linkedExpenseIds=()=>new Set([
     ...financeState().advances.map(a=>a.expenseId),
-    ...financeState().settlements.map(x=>x.netExpenseId).filter(Boolean)
+    ...financeState().settlements.map(x=>x.netExpenseId).filter(Boolean),
+    ...data.factoryExpenses.filter(x=>x.role==="assembly_payable"||x.role==="assembly_cash").map(x=>x.id)
   ]);
   function settlementRows(){
     return [...financeState().settlements].sort((a,b)=>String(b.date).localeCompare(String(a.date))||String(b.createdAt).localeCompare(String(a.createdAt)));
@@ -1186,7 +1233,7 @@ if("serviceWorker" in navigator)navigator.serviceWorker.register("sw.js").catch(
       <div class="calc" id="finance-preview-result" role="status" aria-live="polite">Informe os pares e a tarifa para calcular o bruto.</div>
       <div class="calc"><strong>${expenseMoney(fromCents(openTotal))}</strong> em adiantamentos sem abatimento registrado.</div>
       ${advances.length?advances.map(a=>`<div class="row"><div class="row-top"><span class="name">${esc(data.settings.mountings.find(m=>m.id===a.mountingId)?.name||a.mountingId)}</span><span class="value">${expenseMoney(fromCents(a.balanceCents))}</span></div><div class="votes">Adiantamento pago em ${fmtDate(a.expense.date)} · previsto para ${a.dueDate?fmtDate(a.dueDate):"sem data"}</div></div>`).join(""):'<div class="empty">Nenhum adiantamento em aberto.</div>'}
-      <details class="dashboard-details" id="settlement-details"><summary>Registrar acerto realizado</summary>
+      <details class="dashboard-details" id="settlement-details"><summary>Registrar acerto avulso realizado</summary>
       <p class="sub">Use somente depois de conferir o pagamento ou abatimento já realizado. O histórico não vincula os acertos aos pares produzidos.</p>
       <form id="settlement-form">
         <div class="form-grid"><div class="field"><label for="settlement-date">Data do acerto realizado</label><input id="settlement-date" type="date" value="${spDate()}"></div>
@@ -1203,6 +1250,50 @@ if("serviceWorker" in navigator)navigator.serviceWorker.register("sw.js").catch(
       ${settlements.length?settlements.map(x=>{const discounted=(x.allocations||[]).reduce((n,a)=>n+Number(a.amountCents||0),0),net=Number(x.grossCents||0)-discounted;return `<div class="row"><div class="row-top"><span class="name">${esc(data.settings.mountings.find(m=>m.id===x.mountingId)?.name||x.mountingId)} · ${fmtDate(x.date)}</span><span class="value">${expenseMoney(fromCents(x.grossCents))} bruto</span></div><div class="votes">Abatimento ${expenseMoney(fromCents(discounted))} · pagamento registrado ${expenseMoney(fromCents(net))}</div></div>`}).join(""):'<div class="empty">Nenhum acerto registrado.</div>'}</details>
     </div>`;
   }
+  function assemblyPanel(){
+    if(typeof FioriAssembly==="undefined")return '<div class="notice">Atualize o app para carregar montagem a pagar.</div>';
+    let obligations;try{obligations=FioriAssembly.obligations(data)}catch(error){return `<div class="notice">Montagem a pagar precisa de conferência: ${esc(error.message)}</div>`}
+    const pending=obligations.filter(x=>x.status==="pending"),options=data.settings.mountings.filter(x=>x.active!==false||pending.some(p=>p.mountingId===x.id)).map(m=>`<option value="${esc(m.id)}">${esc(m.name)}</option>`).join("");
+    return `<section class="block" id="assembly-panel"><h2>Montagem a pagar</h2><p class="sub">Novos produtos prontos geram uma conta pendente pela tarifa da data da produção. Registros anteriores permanecem preservados.</p>
+      <div class="calc">${pending.length} conta(s) pendente(s) · ${expenseMoney(pending.reduce((n,x)=>n+x.grossCents,0)/100)} bruto</div>
+      <form id="assembly-settlement-form"><div class="form-grid"><div class="field"><label for="assembly-mounting">Montagem</label><select id="assembly-mounting"><option value="">Selecione</option>${options}</select></div><div class="field"><label for="assembly-date">Data do acerto realizado</label><input id="assembly-date" type="date" value="${spDate()}"></div></div>
+      <div id="assembly-obligations" class="empty">Selecione a montagem para conferir as contas.</div>
+      <div id="assembly-preview" class="calc" role="status" aria-live="polite">O abatimento será calculado pelos adiantamentos em aberto.</div>
+      <div class="field"><label for="assembly-method">Forma do pagamento líquido já realizado</label><select id="assembly-method">${PAYMENT_METHODS.map(m=>`<option>${esc(m)}</option>`).join("")}</select></div><div class="field"><label for="assembly-note">Observação</label><input id="assembly-note" placeholder="Opcional"></div><button class="btn primary full" type="submit">Revisar acerto da produção</button></form></section>`;
+  }
+  let assemblyRenderGeneration=0;
+  function bindAssemblySettlement(){
+    if(typeof FioriAssembly==="undefined")return;
+    const form=document.getElementById("assembly-settlement-form");if(!form)return;
+    const generation=++assemblyRenderGeneration,isCurrent=()=>generation===assemblyRenderGeneration&&ui.tab==="expenses";
+    const mounting=document.getElementById("assembly-mounting"),date=document.getElementById("assembly-date"),list=document.getElementById("assembly-obligations"),preview=document.getElementById("assembly-preview");
+    let selected=new Set();
+    const plan=()=>FioriAssembly.planSettlement(data,{mountingId:mounting.value,date:date.value,obligationIds:[...selected]});
+    function updatePreview(){try{const p=plan();preview.textContent=`Bruto ${expenseMoney(p.grossCents/100)} − adiantamentos ${expenseMoney(p.discountedCents/100)} = líquido ${expenseMoney(p.netCents/100)}. Nenhum pagamento foi registrado.`}catch(error){preview.textContent=error.message}}
+    function updateList(){
+      selected=new Set();let rows=[];
+      try{rows=FioriAssembly.obligations(data,{mountingId:mounting.value,date:date.value,status:"pending"}).filter(x=>x.mountingId===mounting.value)}catch(error){list.textContent=error.message;return}
+      list.innerHTML=rows.length?rows.map(x=>`<label class="row"><span><input type="checkbox" data-assembly-obligation="${esc(x.id)}" checked> ${esc(x.description)} · ${fmtDate(x.date)} · ${expenseMoney(x.grossCents/100)}</span></label>`).join(""):'<div class="empty">Nenhuma conta pendente para essa montagem até a data escolhida.</div>';
+      for(const row of rows)selected.add(row.id);
+      list.querySelectorAll("[data-assembly-obligation]").forEach(input=>input.onchange=()=>{if(input.checked)selected.add(input.dataset.assemblyObligation);else selected.delete(input.dataset.assemblyObligation);updatePreview()});
+      updatePreview();
+    }
+    mounting.onchange=updateList;date.onchange=updateList;
+    form.onsubmit=e=>{
+      e.preventDefault();if(!isCurrent())return;if(assemblyBusy()){showToast("Aguarde a confirmação online ou resolva o conflito antes do acerto.");return}
+      let p;try{p=plan()}catch(error){showToast(error.message);return}
+      if(p.date>spDate()){showToast("Use a data do acerto já realizado.");return}
+      const method=document.getElementById("assembly-method").value,note=document.getElementById("assembly-note").value.trim();
+      if(p.netCents>0&&!PAYMENT_METHODS.includes(method)){showToast("Informe a forma do pagamento já realizado.");return}
+      const fingerprint=JSON.stringify(data),id=uid("acerto"),name=data.settings.mountings.find(x=>x.id===p.mountingId)?.name||p.mountingId;let confirmed=false;
+      const allocations=p.allocations.map(a=>{const advance=financeState().advances.find(x=>x.id===a.advanceId),expense=advanceExpense(advance);return `${fmtDate(expense.date)}: ${expenseMoney(a.amountCents/100)}`}).join("; ");
+      confirmAction({title:"Confirmar acerto da produção?",message:`${name} · ${fmtDate(p.date)}. ${p.obligationIds.length} conta(s). Bruto ${expenseMoney(p.grossCents/100)}; adiantamentos ${expenseMoney(p.discountedCents/100)}${allocations?` (${allocations})`:""}; líquido ${expenseMoney(p.netCents/100)}${p.netCents>0?` já pago por ${method}`:", sem novo pagamento"}. As contas selecionadas ficarão pagas. Este registro não transfere dinheiro.${note?` Observação: ${note}`:""}`,confirmText:"Confirmar acerto realizado",onConfirm:()=>{
+        if(confirmed)return;confirmed=true;
+        if(!isCurrent()||assemblyBusy()||JSON.stringify(data)!==fingerprint){showToast("Os dados mudaram. Confira o acerto novamente antes de registrar.");return}
+        try{const next=FioriAssembly.applySettlement(data,p,{id,now:new Date().toISOString(),method,note});if(!persistCandidate(next))return;expenseMonth=monthKey(p.date);renderExpenses();showToast("Acerto registrado. Aguardando confirmação online.")}catch(error){showToast(error.message)}
+      }});
+    };
+  }
   function expenseFormValues(item={}){
     return {date:item.date||spDate(),category:item.category||"Matéria-prima",description:item.description||"",supplier:item.supplier||"",amount:item.amount??"",method:item.method||"Pix",status:item.status||"paid",note:item.note||""};
   }
@@ -1215,14 +1306,17 @@ if("serviceWorker" in navigator)navigator.serviceWorker.register("sw.js").catch(
     root.innerHTML=`
       <div class="block">
         <div class="readonly"><div><h2>Gastos da fábrica</h2><p class="sub">Controle mensal de despesas operacionais.</p></div><div class="field" style="margin:0;min-width:150px"><label for="expense-month">Mês</label><input id="expense-month" type="month" value="${esc(expenseMonth)}"></div></div>
-        <div class="summary-grid">
-          <div class="summary-stat"><strong>${expenseMoney(s.total)}</strong><span>Total lançado</span></div>
-          <div class="summary-stat"><strong>${expenseMoney(s.paid)}</strong><span>Pago</span></div>
-          <div class="summary-stat"><strong>${expenseMoney(s.pending)}</strong><span>Pendente</span></div>
+        ${s.accountingIssue?`<div class="notice" role="alert">Os totais precisam de conferência: ${esc(s.accountingIssue)}</div>`:`<div class="summary-grid">
+          <div class="summary-stat"><strong>${expenseMoney(s.total)}</strong><span>${s.assemblyAccounting?"Custo lançado":"Total lançado"}</span></div>
+          <div class="summary-stat"><strong>${expenseMoney(s.paid)}</strong><span>${s.assemblyAccounting?"Custo quitado":"Pago"}</span></div>
+          <div class="summary-stat"><strong>${expenseMoney(s.pending)}</strong><span>${s.assemblyAccounting?"Pendente bruto":"Pendente"}</span></div>
           <div class="summary-stat"><strong>${s.expenseRows.length}</strong><span>Gastos</span></div>
+          ${s.assemblyAccounting?`<div class="summary-stat"><strong>${expenseMoney(s.cashPaid)}</strong><span>Pago no caixa</span></div>`:""}
           <div class="summary-stat"><strong>${expenseMoney(s.withdrawals)}</strong><span>Retiradas · fora dos gastos</span></div>
-        </div>
+        </div>`}
       </div>
+      ${s.assemblyAccounting?'<div class="notice">O custo de montagem aparece uma vez. Adiantamentos e pagamentos líquidos entram em Pago no caixa; a conta de produção quitada não gera outra saída. Pendente bruto é antes dos adiantamentos disponíveis.</div>':""}
+      ${assemblyPanel()}
       ${financePanel()}\n      <form class="block" id="expense-form">
         <h2>${edit?"Editar gasto":"Novo gasto"}</h2>
         <div class="form-grid">
@@ -1251,6 +1345,7 @@ if("serviceWorker" in navigator)navigator.serviceWorker.register("sw.js").catch(
       </div>
       <div class="notice"><strong>Base online.</strong> Gastos e retiradas são sincronizados com os demais dados. Pró-labore/Retirada fica registrado, mas não entra no total de gastos.</div>`;
 
+    bindAssemblySettlement();
     document.getElementById("expense-month").onchange=e=>{expenseMonth=e.target.value||currentMonth();editingExpenseId=null;renderExpenses()};
     const previewMounting=document.getElementById("finance-preview-mounting"),previewPairs=document.getElementById("finance-preview-pairs"),previewRate=document.getElementById("finance-preview-rate"),previewResult=document.getElementById("finance-preview-result");
     function updateFinanceSimulation(){
@@ -1537,9 +1632,25 @@ if("serviceWorker" in navigator)navigator.serviceWorker.register("sw.js").catch(
   };
   function readPending(){try{return JSON.parse(localStorage.getItem(PENDING_KEY)||"null")}catch(_){return null}}
   function writePending(v){if(v)localStorage.setItem(PENDING_KEY,JSON.stringify(v));else localStorage.removeItem(PENDING_KEY)}
-  const hasPending=()=>!!readPending(),deepEqual=(a,b)=>{try{return JSON.stringify(a)===JSON.stringify(b)}catch(_){return false}};
+  const hasPending=()=>!!readPending();
+  const canonical=value=>Array.isArray(value)?"["+value.map(canonical).join(",")+"]":value&&typeof value==="object"?"{"+Object.keys(value).sort().map(key=>JSON.stringify(key)+":"+canonical(value[key])).join(",")+"}":JSON.stringify(value);
+  const deepEqual=(a,b)=>{try{return canonical(a)===canonical(b)}catch(_){return false}};
+  function acknowledgeSent(row,sentData){
+    const current=readPending();
+    if(!row?.data||Number(row.revision||0)<remoteRevision||(!deepEqual(row.data,sentData)&&!deepEqual(row.data,current?.data)))return false;
+    remoteRevision=Number(row.revision||0);confirmedData=clone(row.data);syncConflict=false;localStorage.removeItem(CONFLICT_KEY);
+    if(!current||deepEqual(current.data,row.data)){writePending(null);applyRemote(row);setStatus("Base online · confirmada");showToast("Alteração já confirmada na base online.")}
+    else{current.baseRevision=remoteRevision;delete current.lastSent;writePending(current);setStatus("Alteração anterior confirmada · sincronizando a próxima…")}
+    return true;
+  }
   function setConflict(localPending,remoteRow,reason){syncConflict=true;localStorage.setItem(CONFLICT_KEY,JSON.stringify({detectedAt:new Date().toISOString(),reason:String(reason||"revision conflict"),local:localPending,remote:{revision:Number(remoteRow?.revision||0),updated_at:remoteRow?.updated_at||null,data:remoteRow?.data||null}}));setStatus("Conflito protegido · não altere até revisar");showModal(`<h2 id="modal-title">Conflito protegido</h2><p>Há uma alteração deste aparelho e outra versão mais nova na base online.</p><p><strong>Nenhum dos dois lados foi apagado.</strong> Não faça novos lançamentos neste aparelho até revisar o conflito.</p><button class="btn primary full" data-modal-close>Entendi</button>`)}
-  function applyRemote(row,announce=false){if(!row||!row.data||Number(row.revision||0)<remoteRevision||hasPending()||syncConflict)return;if(goalDialog)closeModal();confirmedData=clone(row.data);applyingRemote=true;remoteRevision=Number(row.revision||0);localStorage.setItem(STORAGE_KEY,JSON.stringify(row.data));data=loadData();applyingRemote=false;try{render()}catch(_){}setStatus("Base online · sincronizada");reconcileGoalPrompt();if(announce)showToast("Dados atualizados pela base online.")}
+  function applyRemote(row,announce=false){
+    if(!row||!row.data||Number(row.revision||0)<remoteRevision||hasPending()||syncConflict)return;
+    if(goalDialog)closeModal();confirmedData=clone(row.data);remoteRevision=Number(row.revision||0);let cacheSaved=true;
+    applyingRemote=true;
+    try{try{localStorage.setItem(STORAGE_KEY,JSON.stringify(row.data))}catch(_){cacheSaved=false}data=loadData(row.data)}finally{applyingRemote=false}
+    try{render()}catch(_){}setStatus(cacheSaved?"Base online · sincronizada":"Base online · cache local indisponível");reconcileGoalPrompt();if(announce)showToast("Dados atualizados pela base online.");
+  }
   async function fetchRemoteState(){const {data:row,error}=await sb.from("app_state").select("data,revision,updated_at").eq("workspace_id",WORKSPACE_ID).single();if(error)throw error;if(!row||!row.data||typeof row.data!=="object"||Array.isArray(row.data)||!row.data.weeks||typeof row.data.weeks!=="object"||Array.isArray(row.data.weeks))throw new Error("Base online indisponível");return row}
   function scheduleFlush(delay=180){clearTimeout(saveTimer);saveTimer=setTimeout(()=>flushRemoteSave(),delay)}
   async function restorePendingOrRemote(row){
@@ -1559,8 +1670,13 @@ if("serviceWorker" in navigator)navigator.serviceWorker.register("sw.js").catch(
       return;
     }
     if(deepEqual(pending.data,row.data)){writePending(null);localStorage.removeItem(CONFLICT_KEY);syncConflict=false;applyRemote(row);return}
+    if(pending.lastSent?.data&&deepEqual(pending.lastSent.data,row.data)){
+      pending.baseRevision=remoteRevision;delete pending.lastSent;writePending(pending);
+    }
     if(Number(pending.baseRevision)===remoteRevision){
-      applyingRemote=true;localStorage.setItem(STORAGE_KEY,JSON.stringify(pending.data));data=loadData();applyingRemote=false;
+      if(pending.lastSent){delete pending.lastSent;writePending(pending)}
+      applyingRemote=true;
+      try{try{localStorage.setItem(STORAGE_KEY,JSON.stringify(pending.data))}catch(_){}data=loadData(pending.data)}finally{applyingRemote=false}
       try{render()}catch(_){}setStatus("Alteração pendente · sincronizando…");scheduleFlush(30);return;
     }
     setConflict(pending,row,"base changed while local change was pending");
@@ -1604,18 +1720,30 @@ if("serviceWorker" in navigator)navigator.serviceWorker.register("sw.js").catch(
     flushPromise=(async()=>{
       while(currentSession()){
         const pending=readPending();if(!pending)break;
+        if(pending.lastSent?.data){
+          const latest=await fetchRemoteState();if(!currentSession())break;
+          if(acknowledgeSent(latest,pending.lastSent.data))continue;
+          const current=readPending();
+          if(current&&Number(latest.revision)===Number(pending.lastSent.baseRevision)&&Number(latest.revision)===Number(pending.baseRevision)){
+            remoteRevision=Number(latest.revision);confirmedData=clone(latest.data);delete current.lastSent;writePending(current);continue;
+          }
+          setConflict(current||pending,latest,"previous write was not confirmed and the online base changed");break;
+        }
         const {data:{session}}=await sb.auth.getSession();
         if(!currentSession())break;
         if(!session){lock();setStatus("Entre para sincronizar");break}
         setStatus("Sincronizando…");
         const sentVersion=Number(pending.localVersion||1),sentData=clone(pending.data);
+        pending.lastSent={data:clone(sentData),localVersion:sentVersion,baseRevision:remoteRevision};writePending(pending);
         const {data:result,error}=await sb.rpc("save_app_state",{p_workspace_id:WORKSPACE_ID,p_data:sentData,p_expected_revision:remoteRevision});
         if(!currentSession())break;
         if(error){
           const msg=String(error.message||error||"");
           if(String(error.code)==="23514"){setStatus("Estoque recusado · corrija o lançamento pendente");showToast(msg)}
           else if(msg.toLowerCase().includes("revision conflict")){
-            const latest=await fetchRemoteState();if(currentSession())setConflict(readPending()||pending,latest,msg);
+            const latest=await fetchRemoteState();if(!currentSession())break;
+            if(acknowledgeSent(latest,sentData))continue;
+            setConflict(readPending()||pending,latest,msg);
           }else{setStatus(navigator.onLine?"Erro de sincronização · pendente":"Sem internet · pendente");showToast("Alteração preservada neste aparelho e pendente de sincronização.")}
           break;
         }
@@ -1625,7 +1753,7 @@ if("serviceWorker" in navigator)navigator.serviceWorker.register("sw.js").catch(
         if(!current||Number(current.localVersion||0)===sentVersion){
           writePending(null);localStorage.removeItem(CONFLICT_KEY);setStatus("Base online · confirmada");showToast("Alterações confirmadas na base online.");break;
         }
-        current.baseRevision=remoteRevision;writePending(current);
+        current.baseRevision=remoteRevision;delete current.lastSent;writePending(current);
       }
     })().catch(()=>{if(currentSession()){setStatus("Erro de sincronização · pendente");showToast("Alteração preservada neste aparelho. Confira a conexão.")}}).finally(()=>{
       flushPromise=null;reconcileGoalPrompt();
@@ -1634,7 +1762,16 @@ if("serviceWorker" in navigator)navigator.serviceWorker.register("sw.js").catch(
     return flushPromise;
   }
   const originalSave=save;
-  save=function(){if(!canWrite()){showToast("Entre e aguarde a base online antes de salvar.");return false}originalSave();if(applyingRemote)return;const current=readPending();writePending({data:clone(data),hydrated:true,baseRevision:current?.baseRevision??remoteRevision,localVersion:Number(current?.localVersion||0)+1,savedAt:new Date().toISOString()});if(syncConflict){setStatus("Conflito protegido · alteração preservada localmente");return}setStatus("Aguardando confirmação online…");scheduleFlush()};
+  save=function(){
+    if(!canWrite()){showToast("Entre e aguarde a base online antes de salvar.");return false}
+    if(applyingRemote){originalSave();return true}
+    const current=readPending();
+    try{writePending({data:clone(data),hydrated:true,baseRevision:current?.baseRevision??remoteRevision,localVersion:Number(current?.localVersion||0)+1,savedAt:new Date().toISOString(),...(current?.lastSent?{lastSent:current.lastSent}:{})})}
+    catch(_){setStatus("Não foi possível salvar · libere espaço e tente novamente");return false}
+    try{originalSave()}catch(_){setStatus("Alteração preservada na fila · aguardando confirmação online")}
+    if(syncConflict){setStatus("Conflito protegido · alteração preservada localmente");return true}
+    setStatus("Aguardando confirmação online…");scheduleFlush();return true;
+  };
   window.addEventListener("online",()=>{if(canWrite()&&hasPending()&&!syncConflict)scheduleFlush(20)});
   window.addEventListener("focus",async()=>{
     const sequence=loadSequence;
