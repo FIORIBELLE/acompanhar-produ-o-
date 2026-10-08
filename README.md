@@ -121,3 +121,15 @@ A grade é um detalhamento registrado, não um controle separado de saldo por ta
 No Início, o aviso de pares sem cor usa somente saldos globais positivos e não soma novamente os saldos das montagens. Mostra o detalhamento por setor e esclarece que a soma de componentes não é quantidade de sapatos prontos. Divergências suspendem esse total. Nenhuma cor é atribuída retroativamente.
 
 Cache v33. Testes sintéticos cobrem padrões, exceções, edição, soma, limites, validação por cor, integridade financeira, repetição, rollback, concorrência, navegação e ausência de gravações ao consultar. Nenhum teste grava produção ou financeiro reais.
+
+## Capacidade e material parado por montagem — r8.6
+
+Cada montagem mostra a capacidade estimada e as sobras por linha, fora do detalhamento de cores. O limite por quantidade é o menor saldo entre cabedal, solado e palmilha da linha; a linha 300 usa apenas cabedal e solado. Modelos com configuração explícita sem palmilha respeitam essa regra. Se a mesma linha mistura exigências diferentes de palmilha, o cálculo fica a conferir, para não inventar uma distribuição de componentes entre modelos.
+
+As sobras são os saldos que excedem esse limite por quantidade. Exemplo sintético: 216 cabedais, 576 solados e 1.152 palmilhas na linha 500 indicam limite estimado de 216 pares, sobra de 360 solados (5 fichas) e 936 palmilhas (13 fichas). O material continua disponível para produções futuras; o excedente não identifica sozinho uma referência faltante. Fichas seguem a unidade configurada e representam equivalência de quantidade, não grade completa.
+
+O resumo para compartilhar remete ao detalhamento por linha, sem prometer produção imediata com um total agregado ou indicar um gargalo global. O cálculo adicional com cores informadas usa o guard de estoque existente. Todos os modelos da mesma linha compartilham os materiais uma única vez. Saldo sem cor discriminada continua nos totais e nas sobras por quantidade, mas não é tratado como combinação de cores confirmada. Quando o limite por cores é menor, um aviso pede conferência antes de produzir. A numeração registrada nas fichas não estabelece saldo independente por tamanho nem garantia de montagem.
+
+Saldo negativo, quantidade inválida, divergência no guard, cadastro ambíguo, resumo incompatível com cores ou histórico de materiais alterado suspendem a estimativa e as sobras calculadas. Os saldos permanecem para conferência. Consultar, expandir cores, voltar ao histórico ou receber atualização online não grava, reserva, baixa ou redistribui estoque e não cria obrigações financeiras.
+
+Cache v34. Testes somente com dados sintéticos cobrem cálculos, cores conhecidas e desconhecidas, linhas e montagens isoladas, materiais compartilhados, falta de componentes, retornos, datas, inválidos, congelamento do estado, cliques e renderizações repetidas, histórico e atualização recebida. A prévia visual não pôde ser acessada pelo navegador da nuvem: os protocolos locais foram bloqueados, e HTTP local retornou ERR_BLOCKED_BY_CLIENT. Não foi realizada validação visual em navegador.

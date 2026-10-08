@@ -18,7 +18,7 @@ function app(fixture=state()){
     document:{getElementById:node,querySelector:node,querySelectorAll(){return[]}},
     window:{scrollTo(){}},setTimeout(){},clearTimeout(){}});
   const main=scripts[0][2].slice(0,scripts[0][2].lastIndexOf('\ndocument.querySelectorAll("nav [role=tab]").forEach'));
-  vm.runInContext(main+'\nglobalThis.testApi={renderWeek,readyStockForWeek,mountingsForWeek,weekSummary,ui,getData:()=>data};',context);
+  vm.runInContext(main+'\nglobalThis.testApi={renderWeek,shareText,readyStockForWeek,mountingsForWeek,weekSummary,ui,getData:()=>data};',context);
   return{api:context.testApi,nodes,node};
 }
 for(const [qty,expected] of [[0,'0 fichas'],[72,'1 ficha'],[96,'1 ficha + 4 kits'],[168,'2 fichas + 4 kits']]){
@@ -180,7 +180,7 @@ test('material sheets do not change available production when colors do not matc
   const card=node('tab-week').innerHTML.match(/data-mounting-card="b"[\s\S]*?<\/article>/)[0];
   assert.match(card,/Linha 300/);assert.match(card,/1 ficha \+ 24 pares/);assert.match(card,/Não usa palmilha/);
   assert.match(card,/Linha 500/);assert.match(card,/Palmilhas<\/span><strong>1 ficha/);
-  assert.match(card,/pode produzir <strong>96 pares<\/strong>/);
+  assert.match(card,/Com cores informadas compatíveis: 96 pares/);assert.match(card,/Com cores informadas compatíveis: 0 pares/);assert.doesNotMatch(card,/pode produzir/);
   assert.equal(JSON.stringify(api.getData()),before);
 });
 test('shows zero material in an existing line and material-only mounting without changing state',()=>{
@@ -212,9 +212,71 @@ test('material color detail escapes untrusted color names',()=>{
 
 test('new dashboard script uses a cache-busted URL also precached by the service worker',()=>{
   const scriptUrl=html.match(/<script src="(dashboard-view\.js\?v=[^"]+)"><\/script>/)?.[1];
-  assert.equal(scriptUrl,'dashboard-view.js?v=32');
+  assert.equal(scriptUrl,'dashboard-view.js?v=34');
   const sw=fs.readFileSync(path.join(__dirname,'../sw.js'),'utf8');
   assert.ok(sw.includes('"./'+scriptUrl+'"'));
-  assert.match(sw,/shell-v33/);
+  assert.match(sw,/shell-v34/);
 });
 
+
+test('mounting capacity and surplus stay visible outside color disclosure with exact pair equivalents',()=>{
+ const fixture=state(),entries=fixture.weeks['2026-10-05'].entries;
+ entries.find(e=>e.mountingId==='a'&&e.modelId==='m507').qty=144;
+ entries.find(e=>e.mountingId==='a'&&e.kind==='solado').qty=576;
+ entries.find(e=>e.mountingId==='a'&&e.kind==='palmilha').qty=1152;
+ const {api,node}=app(fixture),before=JSON.stringify(api.getData());api.renderWeek();
+ const card=node('tab-week').innerHTML.match(/data-mounting-card="a"[\s\S]*?<\/article>/)[0],summary=card.split('<details class="mounting-materials">')[0];
+ assert.match(summary,/Capacidade estimada por quantidade/);assert.match(summary,/3 fichas \(216 pares\)/);assert.match(summary,/Menor saldo: cabedais/);
+ assert.match(summary,/Sobra de solados<\/span><strong>5 fichas \(360 pares\)/);
+ assert.match(summary,/Sobra de palmilhas<\/span><strong>13 fichas \(936 pares\)/);
+ assert.match(summary,/Material parado nesta comparação/);assert.match(summary,/podem atender produções futuras/);
+ assert.equal((summary.match(/data-capacity-line="500"/g)||[]).length,1);
+ assert.equal(JSON.stringify(api.getData()),before);
+});
+test('cabedal-only line shows zero capacity and keeps its entire quantity as surplus',()=>{
+ const fixture=state();fixture.weeks['2026-10-05'].entries=fixture.weeks['2026-10-05'].entries.filter(e=>e.mountingId==='a'&&e.kind==='cabedal');
+ const {api,node}=app(fixture);api.renderWeek();const card=node('tab-week').innerHTML.match(/data-mounting-card="a"[\s\S]*?<\/article>/)[0];
+ assert.match(card,/data-capacity-line="500"/);assert.match(card,/Capacidade estimada por quantidade<\/h4>\s*<strong>0 fichas \(0 pares\)/);
+ assert.match(card,/Sobra de cabedais<\/span><strong>3 fichas \+ 24 pares \(240 pares\)/);
+});
+test('unknown colors and disagreement are visible and are not represented as guaranteed production',()=>{
+ const fixture=state();fixture.weeks['2026-10-05'].entries.filter(e=>e.mountingId==='a').forEach(e=>e.color='Sem cor discriminada');
+ const {api,node}=app(fixture);api.renderWeek();const card=node('tab-week').innerHTML.match(/data-mounting-card="a"[\s\S]*?<\/article>/)[0],summary=card.split('<details class="mounting-materials">')[0];
+ assert.match(summary,/Com cores informadas compatíveis: 0 pares/);assert.match(summary,/Sem cor, já incluídos nos saldos: 240 pares de cabedais/);
+ assert.match(summary,/não confirma combinação de cores/);assert.match(summary,/Confira antes de produzir/);assert.doesNotMatch(card,/pode produzir|garantia/);
+});
+test('stock issues hide calculated capacity and surplus rather than showing zero as reliable',()=>{
+ const fixture=state();fixture.weeks['2026-10-05'].entries.push({id:'invalid',date:'bad',kind:'solado',qty:72});
+ const {api,node}=app(fixture);api.renderWeek();const card=node('tab-week').innerHTML.match(/data-mounting-card="a"[\s\S]*?<\/article>/)[0];
+ assert.match(card,/Capacidade estimada por quantidade<\/h4>\s*<strong>A conferir/);
+ assert.match(card,/estimativa suspensa/);assert.doesNotMatch(card,/Sobra de solados/);
+});
+test('single pairs and incomplete sheets are legible without repeating the pair count',()=>{
+ const fixture=state(),entries=fixture.weeks['2026-10-05'].entries;
+ entries.filter(e=>e.mountingId==='a').forEach(e=>e.qty=e.kind==='cabedal'?1:e.kind==='solado'?3:4);
+ const {api,node}=app(fixture);api.renderWeek();const card=node('tab-week').innerHTML.match(/data-mounting-card="a"[\s\S]*?<\/article>/)[0];
+ assert.match(card,/Sobra de solados<\/span><strong>1 par<\/strong>/);assert.match(card,/Sobra de palmilhas<\/span><strong>2 pares<\/strong>/);
+ assert.doesNotMatch(card.split('data-capacity-line=')[1],/1 pares|1 par \(1 pares\)|2 pares \(2 pares\)/);
+});
+test('repeated rendering, history and returning to current week keep the projection read-only and fresh',()=>{
+ const fixture=state(),{api,node}=app(fixture),before=JSON.stringify(api.getData());
+ api.renderWeek();const first=node('tab-week').innerHTML;api.renderWeek();assert.equal(node('tab-week').innerHTML,first);
+ api.renderWeek('2026-09-28');assert.doesNotMatch(node('tab-week').innerHTML,/data-capacity-line/);
+ api.renderWeek();assert.equal(node('tab-week').innerHTML,first);assert.equal(JSON.stringify(api.getData()),before);
+ api.getData().weeks['2026-10-05'].entries.find(e=>e.mountingId==='a'&&e.kind==='palmilha').qty=24;api.renderWeek();
+ assert.match(node('tab-week').innerHTML,/Capacidade estimada por quantidade<\/h4>\s*<strong>24 pares/);
+});
+
+test('shared summary no longer claims unknown colors can be produced now or pools line bottlenecks',()=>{
+ const fixture=state();fixture.weeks['2026-10-05'].entries.forEach(e=>e.color='');
+ const {api}=app(fixture),before=JSON.stringify(api.getData()),text=api.shareText();
+ assert.doesNotMatch(text,/Pode produzir agora|Gargalo:/);assert.match(text,/Capacidade e sobras: confira o detalhamento por montagem e linha/);
+ assert.match(text,/Cores, numeração e saldo físico precisam de conferência/);assert.equal(JSON.stringify(api.getData()),before);
+});
+
+test('negative cabedal remains visible at line level while capacity is suspended',()=>{
+ const fixture=state();fixture.weeks['2026-10-05'].entries.push({id:'overdrawn-head',date:'2026-10-07',kind:'finished',mountingId:'a',modelId:'m507',line:'500',color:'Preto',qty:300});
+ const {api,node}=app(fixture);api.renderWeek();const card=node('tab-week').innerHTML.match(/data-mounting-card="a"[\s\S]*?<\/article>/)[0];
+ assert.match(card,/Cabedais<\/span><strong>-60 pares \(saldo negativo\)/);
+ assert.match(card,/Capacidade estimada por quantidade<\/h4>\s*<strong>A conferir/);
+});
