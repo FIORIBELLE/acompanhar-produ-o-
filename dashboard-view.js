@@ -1,9 +1,9 @@
 /* Read-only presentation helpers. Inventory balances remain owned by FioriInventory. */
 (function(root,factory){
-  const api=factory();
+  const api=factory(typeof module==='object'&&module.exports?require('./inventory-guard'):root.FioriInventory);
   if(typeof module==='object'&&module.exports)module.exports=api;
   else root.FioriDashboard=api;
-})(typeof globalThis==='object'?globalThis:this,function(){
+})(typeof globalThis==='object'?globalThis:this,function(Inventory){
   'use strict';
   const number=value=>Number(value||0).toLocaleString('pt-BR',{maximumFractionDigits:1});
   const positiveUnit=(value,fallback)=>Number.isSafeInteger(Number(value))&&Number(value)>0?Number(value):fallback;
@@ -65,6 +65,69 @@
         .sort((a,b)=>a.line.localeCompare(b.line,'pt-BR',{numeric:true}));
       return {id:mounting.id,name:mounting.name,models,lines,total:models.reduce((sum,m)=>sum+m.qty,0),balance};
     });
+  }
+  // Read-only limits and leftovers by mounting/line. Never allocate shared
+  // components per reference, and never count unknown colors as a confirmed match.
+  function mountingLineCapacity(state,balance,options={}){
+    const models=state.settings?.models||[],sourceModels=options.sourceModels||models;
+    const rows=Array.isArray(balance?.colorRows)?balance.colorRows:[],groups=new Map();
+    const knownLine=value=>/^\d00$/.test(String(value||''));
+    const group=line=>{
+      const key=knownLine(line)?String(line):'?';
+      if(!groups.has(key))groups.set(key,{line:key,models:[],errors:[],warnings:[]});
+      return groups.get(key);
+    };
+    const error=(g,message)=>{if(!g.errors.includes(message))g.errors.push(message)};
+    for(const [line,values] of Object.entries(balance?.lines||{}))group(line).materials=values;
+    for(const [id,values] of Object.entries(balance?.models||{})){
+      const matches=models.filter(m=>m.id===id),model=matches[0];
+      const line=model&&Inventory.lineOf(null,model),g=group(line);
+      g.models.push({id,model,qty:values.cabedal});
+      if(matches.length!==1||!knownLine(line)||!Inventory.refOf(model)||models.filter(m=>Inventory.refOf(m)===Inventory.refOf(model)).length!==1)error(g,'Referência ou linha sem identificação única.');
+      const originals=sourceModels.filter(m=>m.id===id);
+      if(originals.length!==1||Inventory.lineOf(null,originals[0])!==line||Inventory.usesPalmilha(originals[0],line)!==Inventory.usesPalmilha(model,line))error(g,'Cadastro de materiais alterado; confira o saldo histórico.');
+    }
+    // Keep malformed/orphan rows visible rather than silently dropping inventory.
+    for(const row of rows){
+      if(row.sector==='cabedal'&&!Object.hasOwn(balance?.models||{},row.target))error(group('?'),'Cabedal sem modelo no resumo de estoque.');
+      else if(['solado','palmilha'].includes(row.sector)&&!Object.hasOwn(balance?.lines||{},row.target))error(group(row.target),'Componente sem linha no resumo de estoque.');
+    }
+    return [...groups.values()].map(g=>{
+      const sum=values=>{let total=0;for(const value of values){if(!Number.isSafeInteger(value)||!Number.isSafeInteger(total+value)){error(g,'Quantidade inválida ou acima do limite; confira os saldos.');return null}total+=value;if(value<0)error(g,'Saldo negativo; confira os lançamentos.')}return total};
+      const ids=new Set(g.models.map(m=>m.id));
+      const relevant=rows.filter(r=>r.sector==='cabedal'?ids.has(r.target):['solado','palmilha'].includes(r.sector)&&r.target===g.line);
+      const totals={cabedal:sum(g.models.map(m=>m.qty)),solado:sum([g.materials?.solado??0]),palmilha:sum([g.materials?.palmilha??0])};
+      const unknown={cabedal:0,solado:0,palmilha:0},seen=new Set();
+      for(const sector of ['cabedal','solado','palmilha']){
+        const sectorRows=relevant.filter(r=>r.sector===sector);
+        if(sum(sectorRows.map(r=>r.qty))!==totals[sector])error(g,'Resumo e cores não coincidem; confira os saldos.');
+        unknown[sector]=sum(sectorRows.filter(r=>Inventory.colorKey(r.color)===Inventory.UNKNOWN).map(r=>r.qty));
+      }
+      for(const row of relevant){
+        const key=JSON.stringify([row.sector,row.target,Inventory.colorKey(row.color)]);
+        if(seen.has(key))error(g,'Saldo por cor repetido; confira os lançamentos.');seen.add(key);
+      }
+      if((options.issues||[]).length)error(g,'Há divergências de estoque; estimativa suspensa.');
+      if(g.line==='?')error(g,'Linha a conferir antes de calcular.');
+      const requirements=new Set(g.models.filter(m=>m.qty>0&&m.model).map(m=>Inventory.usesPalmilha(m.model,g.line)));
+      // An arbitrary allocation between differing bills of materials would make
+      // insole leftovers misleading. Preserve balances and request review instead.
+      if(requirements.size>1)error(g,'Modelos desta linha usam materiais diferentes; confira a composição.');
+      const usesPalmilha=g.line!=='300'&&(requirements.size?requirements.has(true):true);
+      const capacity=g.errors.length?null:Math.min(totals.cabedal,totals.solado,usesPalmilha?totals.palmilha:Infinity);
+      const knownRows=relevant.filter(r=>Inventory.colorKey(r.color)!==Inventory.UNKNOWN).map(r=>({...r,color:Inventory.colorKey(r.color)}));
+      const compatible=g.errors.length?null:Inventory.possibleForMounting(state,{colorRows:knownRows});
+      if(compatible!==null&&(!Number.isSafeInteger(compatible)||compatible<0||compatible>capacity))error(g,'Capacidade por cor inconsistente; confira os saldos.');
+      const hasUnknown=Object.values(unknown).some(q=>q>0);
+      if(hasUnknown)g.warnings.push('Há saldo sem cor discriminada. Ele permanece nos totais, mas não confirma combinação de cores.');
+      if(capacity!==null&&compatible!==null&&compatible<capacity)g.warnings.push('As cores registradas não fecham o limite por quantidade. Confira antes de produzir.');
+      const valid=!g.errors.length;
+      const surplus=valid?{cabedal:totals.cabedal-capacity,solado:totals.solado-capacity,palmilha:totals.palmilha-(usesPalmilha?capacity:0)}:null;
+      const limiting=valid?['cabedal','solado',...(usesPalmilha?['palmilha']:[])].filter(sector=>totals[sector]===capacity):[];
+      return {line:g.line,totals,usesPalmilha,capacity:valid?capacity:null,compatible:valid?compatible:null,
+        surplus,unknown,limiting,errors:g.errors,warnings:g.warnings};
+    }).filter(g=>Object.values(g.totals).some(q=>q!==0)||g.errors.length)
+      .sort((a,b)=>a.line.localeCompare(b.line,'pt-BR',{numeric:true}));
   }
   function remainingPlan(state,week,byModel={}){
     const items=Object.entries(week.modelGoals||{}).filter(([,qty])=>Number(qty)>0)
@@ -219,6 +282,6 @@
     });
     return {mountings:[...rows.values()],invalidEntries};
   }
-  return {unitsText,materialSheetSize,materialUnitsText,modelInfo,displayStateForWeek,mountingCards,remainingPlan,goalModels,parseGoalInput,referencePlan,GOAL_SHEET_SIZE,productionValues};
+  return {unitsText,materialSheetSize,materialUnitsText,modelInfo,displayStateForWeek,mountingCards,mountingLineCapacity,remainingPlan,goalModels,parseGoalInput,referencePlan,GOAL_SHEET_SIZE,productionValues};
 });
 

@@ -145,6 +145,11 @@ footer{color:var(--soft);font-size:.78rem;text-align:center;padding:8px 0 24px}
 .mounting-material-line+.mounting-material-line{border-top:1px solid var(--line)}
 .mounting-material-count{display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-top:4px}
 .mounting-material-count strong{font-variant-numeric:tabular-nums}
+.mounting-capacity{margin-top:10px;padding:10px;border-radius:10px;background:var(--bg)}
+.mounting-capacity h4{margin:0 0 5px;font-size:.87rem}
+.mounting-capacity .notice{margin:8px 0 0}
+.mounting-capacity small{display:block;margin-top:4px}
+.mounting-surplus{margin-top:8px;border-top:1px solid var(--line);padding-top:5px}
 
 .fulfillment-note{background:var(--track);border:1px solid var(--line);border-radius:12px;padding:12px;line-height:1.5;font-size:.85rem}
 .fulfillment-order{border-top:1px solid var(--line);padding:14px 0;overflow-wrap:anywhere}
@@ -217,7 +222,7 @@ footer{color:var(--soft);font-size:.78rem;text-align:center;padding:8px 0 24px}
     <button class="btn" id="edit-goal" type="button">Editar meta</button>
     <button class="btn primary" id="share" type="button">Compartilhar resumo</button>
   </div>
-  <footer id="app-footer">Base online Fiori Belle · sincronização automática · v2026.10.08-r8.5</footer>
+  <footer id="app-footer">Base online Fiori Belle · sincronização automática · v2026.10.08-r8.6</footer>
 </div>
 
 <div class="toast" id="toast" hidden role="status" aria-live="polite"></div>
@@ -227,7 +232,7 @@ footer{color:var(--soft);font-size:.78rem;text-align:center;padding:8px 0 24px}
 <input id="backup-file" type="file" accept="application/json,.json" hidden>
 
 <script src="inventory-guard.js"></script>
-<script src="dashboard-view.js?v=32"></script>
+<script src="dashboard-view.js?v=34"></script>
 <script src="sales-receipt.js"></script>
 <script src="sales-order.js?v=28"></script>
 <script src="order-fulfillment.js?v=28"></script>
@@ -538,20 +543,34 @@ function readyStockWeekMarkup(ready=readyStockForWeek()){
     ${rows||'<div class="empty">Nenhum produto pronto em estoque.</div>'}
   </div>`;
 }
-function mountingStockWeekMarkup(stock,mountings,readOnly,displayState=data){
-  const cards=FioriDashboard.mountingCards(displayState,stock,mountings);
+function mountingLineCapacityMarkup(line){
+  const quantity=value=>value===null?'A conferir':value>0&&value<FioriDashboard.materialSheetSize(data.settings)?`${fmt(value)} ${value===1?'par':'pares'}`:`${FioriDashboard.materialUnitsText(value,data.settings)} (${fmt(value)} pares)`;
+  const labels={cabedal:'cabedais',solado:'solados',palmilha:'palmilhas'};
+  return `<div class="mounting-capacity" data-capacity-line="${esc(line.line)}"><h4>Capacidade estimada por quantidade</h4>
+    <strong>${quantity(line.capacity)}</strong>
+    ${line.capacity!==null?`<small>Menor saldo: ${line.limiting.map(sector=>labels[sector]).join(' e ')}. Com cores informadas compatíveis: ${fmt(line.compatible)} pares.</small>
+    <div class="mounting-surplus"><strong>Material parado nesta comparação</strong>${['cabedal','solado','palmilha'].filter(sector=>sector!=='palmilha'||line.usesPalmilha||line.totals.palmilha!==0).map(sector=>`<div class="mounting-material-count"><span>Sobra de ${labels[sector]}</span><strong>${quantity(line.surplus[sector])}</strong></div>`).join('')}</div>`:''}
+    ${line.errors.length?`<p class="notice dashboard-alert">${line.errors.map(esc).join(' ')}</p>`:''}
+    ${line.warnings.length?`<p class="notice dashboard-alert">${line.warnings.map(esc).join(' ')}</p>`:''}
+    ${Object.values(line.unknown).some(q=>q>0)?`<small>Sem cor, já incluídos nos saldos: ${Object.entries(line.unknown).filter(([,q])=>q>0).map(([sector,q])=>`${fmt(q)} pares de ${labels[sector]}`).join(' · ')}.</small>`:''}
+  </div>`;
+}
+function mountingStockWeekMarkup(stock,mountings,readOnly,displayState=data,issues=[]){
+  const cards=FioriDashboard.mountingCards(displayState,stock,mountings).map(mt=>({...mt,capacityLines:FioriDashboard.mountingLineCapacity(displayState,mt.balance,{issues,sourceModels:data.settings.models})}));
   return `<div class="block" id="week-mounting-stock"><h2>Cabedais nas montagens</h2><p class="sub">${readOnly?"Saldo no fim desta semana.":"Saldo registrado em cada montagem."} Cabedais ainda não são pares prontos.</p>
     ${cards.map(mt=>`<article class="mounting-card" data-mounting-card="${esc(mt.id)}"><h3>${esc(mt.name)}</h3>
       ${mt.total?`<div class="mounting-total">${fmt(mt.total)} pares de cabedal · ${FioriDashboard.unitsText(mt.total,data.settings)}</div>`:""}
       ${mt.models.map(m=>`<div class="row dashboard-model"><div class="row-top"><div>${dashboardModelName(m)}</div><span class="value">${fmt(m.qty)} pares</span></div><div class="votes">${FioriDashboard.unitsText(m.qty,data.settings)}</div>${m.colors.length?`<div class="votes">${m.colors.map(c=>`${esc(FioriInventory.colorLabel(c.color))}: ${fmt(c.qty)} pares`).join(" · ")}</div>`:""}</div>`).join("")||'<div class="empty">Sem cabedais com saldo nesta montagem.</div>'}
-      ${mt.lines.length?`<div class="mounting-material-summary"><p class="sub">Fichas por quantidade · ${fmt(FioriDashboard.materialSheetSize(data.settings))} pares cada</p>
-        ${mt.lines.map(line=>`<div class="mounting-material-line" data-material-line="${esc(line.line)}"><strong>Linha ${esc(line.line)}</strong>
-          <div class="mounting-material-count"><span>Solados</span><strong>${FioriDashboard.materialUnitsText(line.solado,data.settings)}</strong></div>
-          ${line.line!=="300"||line.palmilha!==0?`<div class="mounting-material-count"><span>Palmilhas</span><strong>${FioriDashboard.materialUnitsText(line.palmilha,data.settings)}</strong></div>`:'<div class="votes">Não usa palmilha.</div>'}
-        </div>`).join("")}</div>`:""}
+      ${mt.capacityLines.length?`<div class="mounting-material-summary"><p class="sub">Fichas por quantidade · ${fmt(FioriDashboard.materialSheetSize(data.settings))} pares cada</p>
+        ${mt.capacityLines.map(line=>`<div class="mounting-material-line" data-material-line="${esc(line.line)}"><strong>${line.line==='?'?'Linha a conferir':'Linha '+esc(line.line)}</strong>
+          <div class="mounting-material-count"><span>Cabedais</span><strong>${line.totals.cabedal===null?'A conferir':FioriDashboard.materialUnitsText(line.totals.cabedal,data.settings)}</strong></div>
+          <div class="mounting-material-count"><span>Solados</span><strong>${line.totals.solado===null?'A conferir':FioriDashboard.materialUnitsText(line.totals.solado,data.settings)}</strong></div>
+          ${line.usesPalmilha||line.totals.palmilha!==0?`<div class="mounting-material-count"><span>Palmilhas</span><strong>${line.totals.palmilha===null?'A conferir':FioriDashboard.materialUnitsText(line.totals.palmilha,data.settings)}</strong></div>`:'<div class="votes">Não usa palmilha.</div>'}
+          ${mountingLineCapacityMarkup(line)}
+        </div>`).join("")}<p class="sub">As sobras pelo limite por quantidade continuam em estoque e podem atender produções futuras. O excedente não define qual referência falta. Confira cores, numeração e saldo físico; fichas são equivalência de pares.</p></div>`:""}
       <details class="mounting-materials"><summary>Ver cores dos materiais e capacidade</summary><p class="sub">Solados e palmilhas são compartilhados pelos modelos da mesma linha e cor. Linha 300 não usa palmilha. A conversão em fichas considera a quantidade de pares; não confirma uma grade completa de cores e tamanhos.</p>
         ${mt.lines.map(line=>`<div class="row"><strong>Linha ${esc(line.line)}</strong>${line.colors.map(c=>`<div class="votes">${c.sector==="solado"?"Solado":"Palmilha"} · ${esc(FioriInventory.colorLabel(c.color))}: ${fmt(c.qty)} pares</div>`).join("")}</div>`).join("")||'<div class="empty">Sem materiais com saldo nesta montagem.</div>'}
-        <div class="calc">Com os materiais e cores registrados, esta montagem pode produzir <strong>${fmt(possibleForMounting(mt.balance))} pares</strong> no total.</div>
+        <p class="sub">A capacidade é comparada por linha acima. Materiais compartilhados não são somados novamente por referência. A numeração é um detalhamento de ficha; não há saldo independente por tamanho para garantir uma grade completa.</p>
       </details></article>`).join("")||'<div class="empty">Cadastre uma montagem em Ajustes.</div>'}
   </div>`;
 }
@@ -578,7 +597,7 @@ function mountingProductionText(row){
 function weekDetailsMarkup(w,s,models,mountings,displayState=data){
   const goal=s.goal,remaining=Math.max(0,goal-s.done),perDay=s.work.remaining?remaining/s.work.remaining:0,maxComponent=Math.max(1,...Object.values(s.componentTotals));
   return `<details class="block dashboard-details" id="week-details"><summary>Ver detalhes da semana</summary>
-    <div class="block"><h2>Produção e meta</h2>${goal?`<div class="meter"><div class="meter-top"><div class="meter-num">${fmt(s.done)}<small> / ${fmt(goal)}</small></div><div class="meter-cap">pares produzidos<br>${pct(s.rate)}</div></div><div class="meter-track"><div class="meter-fill" style="width:${barWidth(s.done,goal)}%"></div></div></div>`:'<p class="sub">Meta semanal não definida.</p>'}<div class="summary-grid"><div class="summary-stat"><strong>${fmt(s.possible)} pares</strong><span>capacidade atual das montagens</span></div><div class="summary-stat"><strong>${fmt(s.projection)} pares</strong><span>projeção semanal no ritmo atual</span></div></div></div>
+    <div class="block"><h2>Produção e meta</h2>${goal?`<div class="meter"><div class="meter-top"><div class="meter-num">${fmt(s.done)}<small> / ${fmt(goal)}</small></div><div class="meter-cap">pares produzidos<br>${pct(s.rate)}</div></div><div class="meter-track"><div class="meter-fill" style="width:${barWidth(s.done,goal)}%"></div></div></div>`:'<p class="sub">Meta semanal não definida.</p>'}<div class="summary-grid"><div class="summary-stat"><strong>${fmt(s.projection)} pares</strong><span>projeção semanal no ritmo atual</span></div></div></div>
     <div class="block"><h2>Componentes disponíveis</h2><p class="sub">Saldos das montagens. Cabedais por modelo; palmilhas e solados compartilhados por linha.</p>${COMPONENTS.map(c=>{const value=s.componentTotals[c.id]||0;return `<div class="row"><div class="row-top"><span class="name">${esc(c.name)}</span><span class="value">${fmt(value)} pares</span></div><div class="bar secondary"><span style="width:${100*value/maxComponent}%"></span></div></div>`}).join("")}</div>
     <div class="block"><h2>Ritmo da semana</h2><div class="row"><div class="row-top"><span class="name">Média diária</span><span class="value">${fmt(s.avg)} pares/dia</span></div><div class="votes">${fmt(s.done)} pares em ${s.work.elapsed} ${s.work.elapsed===1?"dia trabalhado":"dias trabalhados"}</div></div><div class="row"><div class="row-top"><span class="name">Dias de trabalho restantes</span><span class="value">${s.work.remaining}</span></div><div class="votes">Projeção de ${fmt(s.projection)} pares no ritmo atual.</div></div>${goal?`<div class="row"><div class="row-top"><span class="name">${s.work.remaining?"Quanto falta por dia":"Quanto faltou"}</span><span class="value">${fmt(s.work.remaining?perDay:remaining)} ${s.work.remaining?"pares/dia":"pares"}</span></div></div>`:""}</div>
     <div class="block"><h2>Produção por montagem</h2><p class="sub">Valor da produção bruta somado pelas tarifas salvas em cada lançamento. Valores sem tarifa congelada são estimativas pela referência disponível. Não informa saldo a pagar nem gera custo ou dívida.</p>${s.mountingValues.mountings.map(row=>`<div class="row"><div class="row-top"><span class="name">${esc(row.name)}</span><span class="value">${row.totalPairs===null?'Quantidade a conferir':fmt(row.totalPairs)+' prontos'}</span></div><div class="votes">${esc(mountingProductionText(row))}</div></div>`).join("")||'<div class="empty">Cadastre uma montagem em Ajustes.</div>'}</div>
@@ -595,7 +614,7 @@ function renderWeek(key=ui.viewWeek||currentWeekKey()){
     ${issues.length?`<div class="notice dashboard-alert" role="alert"><strong>Há divergências de estoque a revisar.</strong> Os saldos exibidos não confirmam o estoque físico.<details><summary>Ver ${issues.length} ${issues.length===1?"divergência":"divergências"}</summary><ul>${issues.map(issue=>`<li>${esc(issue.message)}</li>`).join("")}</ul></details></div>`:""}
     ${readOnly?"":unknownColorNotice(data,spDate())}
     ${readOnly?"":readyStockWeekMarkup(ready)}
-    ${mountingStockWeekMarkup(s.stockByMounting,mountings,readOnly,displayState)}
+    ${mountingStockWeekMarkup(s.stockByMounting,mountings,readOnly,displayState,issues)}
     ${remainingWeekMarkup(w,s,readOnly,key,displayState)}
     ${weekDetailsMarkup(w,s,models,mountings,displayState)}`;
   if(readOnly)document.getElementById("back-current").onclick=()=>{ui.viewWeek=null;render();window.scrollTo({top:0,behavior:"smooth"})};
@@ -1065,7 +1084,7 @@ function shareText(){
     "ACOMPANHAR PRODUÇÃO",`Semana: ${weekLabel(key)}`,`Meta: ${s.goal?fmt(s.goal)+" pares":"não definida"}`,"",
     "COMPONENTES DISPONÍVEIS",...COMPONENTS.map(c=>`${c.name}: ${fmt(s.componentTotals[c.id]||0)} pares`),"",
     "POR MONTAGEM",...s.mountingValues.mountings.map(row=>`${row.name}: ${row.totalPairs===null?'quantidade a conferir':fmt(row.totalPairs)+' pares'} · ${mountingProductionText(row)}`),"Valores estimados não confirmam custo nem saldo a pagar.","",
-    `Pares prontos: ${fmt(s.done)}${s.goal?` · ${pct(s.rate)}`:""}`,`Pode produzir agora: ${fmt(s.possible)} pares`,`Gargalo: ${s.gargalo?.name||"—"}`,`Projeção: ${fmt(s.projection)} pares no ritmo atual`
+    `Pares prontos: ${fmt(s.done)}${s.goal?` · ${pct(s.rate)}`:""}`,"Capacidade e sobras: confira o detalhamento por montagem e linha no Início. Cores, numeração e saldo físico precisam de conferência.",`Projeção: ${fmt(s.projection)} pares no ritmo atual`
   ].join("\n");
 }
 async function share(){
