@@ -74,6 +74,58 @@
     const total=items.reduce((sum,item)=>sum+item.goal,0),goal=Number(week.goal)||0;
     return {items,total,mismatch:items.length>0&&goal>0&&total!==goal};
   }
+  // Goals remain stored in pairs in the existing weekly modelGoals map.
+  const GOAL_SHEET_SIZE=72;
+  function goalModels(state,week){
+    const current=state.settings?.models||[],snapshot=week.modelSnapshot||[];
+    const ids=[...new Set([...current.filter(m=>m.active!==false).map(m=>m.id),...Object.keys(week.modelGoals||{})])];
+    return ids.map(id=>current.find(m=>m.id===id)||snapshot.find(m=>m.id===id)||{id,name:id,active:false});
+  }
+  function parseGoalInput(totalInput,inputs){
+    const integer=(raw,label)=>{const text=String(raw??'').trim();if(!text)return 0;if(!/^\d+$/.test(text)||!Number.isSafeInteger(Number(text)))throw Error(`${label}: use um número inteiro válido.`);return Number(text)};
+    try{
+      const goal=integer(totalInput,'Meta total'),modelGoals={};let total=0;
+      if(goal<=0)throw Error('Digite uma meta total maior que zero.');
+      for(const input of inputs){
+        if(typeof input.id!=='string'||!input.id||['__proto__','constructor','prototype'].includes(input.id)||Object.hasOwn(modelGoals,input.id))throw Error('Modelo repetido ou não identificado.');
+        const sheets=integer(input.sheets,'Fichas'),pairs=integer(input.pairs,'Pares avulsos');
+        if(pairs>=GOAL_SHEET_SIZE)throw Error('Use de 0 a 71 pares avulsos; cada ficha contém 72 pares.');
+        const quantity=sheets*GOAL_SHEET_SIZE+pairs;
+        if(!Number.isSafeInteger(quantity)||!Number.isSafeInteger(total+quantity))throw Error('Quantidade acima do limite permitido.');
+        modelGoals[input.id]=quantity||null;total+=quantity;
+      }
+      if(total>0&&total!==goal)throw Error(`As metas por modelo somam ${number(total)} pares. Ajuste a meta total ou o plano por modelo.`);
+      return {ok:true,goal,modelGoals,total};
+    }catch(error){return{ok:false,message:error.message}}
+  }
+  function referencePlan(state,week,key,until,ledger,options={}){
+    const positive=value=>Number.isSafeInteger(value)&&value>0;
+    const validDate=value=>typeof value==='string'&&/^\d{4}-\d{2}-\d{2}$/.test(value)&&Number.isFinite(Date.parse(value+'T12:00:00Z'))&&new Date(value+'T12:00:00Z').toISOString().slice(0,10)===value;
+    const issues=Array.isArray(ledger?.issues)?ledger.issues:[],rows=Array.isArray(ledger?.rows)?ledger.rows:[];
+    const items=Object.entries(week.modelGoals||{}).filter(([,goal])=>goal!==null&&goal!==undefined&&goal!==0).map(([id,goal])=>{
+      const info=modelInfo(state,id),models=state.settings?.models||[];
+      const errors=[];if(!positive(goal))errors.push('Meta inválida.');
+      const sourceModel=(options.sourceModels||models).find(m=>m.id===id);
+      const sameReference=!sourceModel||modelInfo({settings:{models:[sourceModel]}},id).ref===info.ref;
+      if(!sameReference)errors.push('Referência alterada após esta semana; confira o saldo histórico.');
+      if(models.filter(m=>m.id===id).length!==1||models.filter(m=>modelInfo({settings:{models:[m]}},m.id).ref===info.ref).length!==1)errors.push('Referência sem identificação única.');
+      const relevant=(week.entries||[]).filter(e=>e.kind==='finished'&&e.modelId===id);
+      const completed=relevant.filter(e=>validDate(e.date)&&e.date>=key&&e.date<=until);
+      if(relevant.some(e=>!validDate(e.date))||completed.some(e=>!positive(e.qty)))errors.push('Produção a conferir.');
+      const sum=list=>{const value=list.reduce((n,row)=>n+row.qty,0);if(!Number.isSafeInteger(value)||value<0){errors.push('Saldo inválido.');return null}return value};
+      const done=sum(completed),inAssembly=sum(rows.filter(r=>r.scope==='mounting'&&r.sector==='cabedal'&&r.target===id));
+      // Global cabedal already includes mounting balances. Never add those balances again.
+      const cutAvailable=sameReference?sum(rows.filter(r=>r.scope==='global'&&r.sector==='cabedal'&&r.target===info.ref)):null;
+      const outsideAssembly=cutAvailable!==null&&inAssembly!==null?cutAvailable-inAssembly:null;
+      if(outsideAssembly!==null&&outsideAssembly<0)errors.push('Saldo geral menor que o saldo nas montagens.');
+      if(!ledger||issues.length)errors.push('Há divergências de estoque a revisar.');
+      return {...info,goal,done,inAssembly,cutAvailable,outsideAssembly,errors,
+        remaining:positive(goal)&&done!==null?Math.max(0,goal-done):null,
+        toCut:errors.length||done===null||cutAvailable===null?null:Math.max(0,goal-done-cutAvailable)};
+    }).sort((a,b)=>a.ref.localeCompare(b.ref,'pt-BR',{numeric:true}));
+    const total=items.reduce((sum,item)=>sum+(positive(item.goal)?item.goal:0),0);
+    return{items,total,mismatch:items.length>0&&total!==week.goal};
+  }
   // Display projection only: these values never create costs, obligations or historical snapshots.
   // Unknown history is explicitly estimated. Corrupt saved entry rates remain unpriced.
   // Returns {mountings, invalidEntries}; monetary fields are integer cents, or null on
@@ -167,6 +219,6 @@
     });
     return {mountings:[...rows.values()],invalidEntries};
   }
-  return {unitsText,materialSheetSize,materialUnitsText,modelInfo,displayStateForWeek,mountingCards,remainingPlan,productionValues};
+  return {unitsText,materialSheetSize,materialUnitsText,modelInfo,displayStateForWeek,mountingCards,remainingPlan,goalModels,parseGoalInput,referencePlan,GOAL_SHEET_SIZE,productionValues};
 });
 

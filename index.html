@@ -165,6 +165,7 @@ footer{color:var(--soft);font-size:.78rem;text-align:center;padding:8px 0 24px}
 .dashboard-details .block:last-child{margin-bottom:0}
 @media(max-width:400px){.app-chrome h1{font-size:1.2rem}.app-chrome .status{font-size:.73rem}.dashboard-model .row-top{align-items:flex-start}.dashboard-model .value{font-size:.9rem}.mounting-card{padding:10px}}
 
+.goal-model-fields{padding:12px 0;border-bottom:1px solid var(--line)}.goal-model-fields>.form-grid{margin-top:8px}.goal-reference-metrics{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin-top:12px}.goal-reference-metrics>div{display:flex;flex-direction:column;gap:3px}.goal-reference-metrics span,.goal-reference-metrics small{font-size:12px;color:var(--muted)}.goal-reference-metrics strong{font-size:18px}.goal-reference-card .sub{margin-bottom:0}@media(min-width:760px){.goal-reference-metrics{grid-template-columns:repeat(4,minmax(0,1fr))}}
 </style>
 
 <style id="remote-sync-style">
@@ -215,7 +216,7 @@ footer{color:var(--soft);font-size:.78rem;text-align:center;padding:8px 0 24px}
     <button class="btn" id="edit-goal" type="button">Editar meta</button>
     <button class="btn primary" id="share" type="button">Compartilhar resumo</button>
   </div>
-  <footer id="app-footer">Base online Fiori Belle · sincronização automática · v2026.10.08-r8.3</footer>
+  <footer id="app-footer">Base online Fiori Belle · sincronização automática · v2026.10.08-r8.4</footer>
 </div>
 
 <div class="toast" id="toast" hidden role="status" aria-live="polite"></div>
@@ -225,7 +226,7 @@ footer{color:var(--soft);font-size:.78rem;text-align:center;padding:8px 0 24px}
 <input id="backup-file" type="file" accept="application/json,.json" hidden>
 
 <script src="inventory-guard.js"></script>
-<script src="dashboard-view.js?v=31"></script>
+<script src="dashboard-view.js?v=32"></script>
 <script src="sales-receipt.js"></script>
 <script src="sales-order.js?v=28"></script>
 <script src="order-fulfillment.js?v=28"></script>
@@ -449,19 +450,46 @@ function confirmAction({title,message,confirmText="Confirmar",danger=false,onCon
 }
 function goalModal(){
   if(!window.fioriOnline?.canEditGoal?.()){showToast("Entre e aguarde a confirmação da base online antes de editar a meta.");return}
-  const key=currentWeekKey(),w=ensureWeek(key),models=activeModels();
-  showModal(`<h2 id="modal-title">Meta da semana</h2><p class="sub">Semana de ${weekLabel(key)}. Use números inteiros em pares.</p>
-    <div class="field"><label for="goal-total">Meta total em pares</label><input id="goal-total" inputmode="numeric" pattern="[0-9]*" value="${w.goal||""}" placeholder="Ex.: 1224"></div>
-    <details><summary>Metas opcionais por modelo</summary><div class="settings-list">${models.map(m=>`<div class="model-goal-grid"><label for="mg-${m.id}">${esc(m.name)}</label><input id="mg-${m.id}" inputmode="numeric" pattern="[0-9]*" value="${w.modelGoals[m.id]||""}" placeholder="Sem meta"></div>`).join("")}</div></details>
+  const key=currentWeekKey(),w=ensureWeek(key),models=FioriDashboard.goalModels(data,w),baseline=JSON.stringify(data);
+  const fields=models.map((model,index)=>{const stored=w.modelGoals[model.id],numeric=typeof stored==="string"&&/^\d+$/.test(stored.trim())?Number(stored.trim()):stored;return {model,index,qty:numeric}});
+  showModal(`<h2 id="modal-title">Meta da semana</h2><p class="sub">Semana de ${weekLabel(key)}. 1 ficha = 72 pares. O plano representa a produção nova desta semana.</p>
+    <div class="field"><label for="goal-total">Meta total em pares</label><input id="goal-total" inputmode="numeric" pattern="[0-9]*" value="${esc(w.goal??"")}" placeholder="Ex.: 1008"></div>
+    <h3>Metas por modelo em fichas</h3><p class="sub">Preencha os modelos do plano. Deixe os demais em branco. Pares avulsos preservam metas que não fecham uma ficha.</p>
+    <div class="settings-list">${fields.map(({model,index,qty})=>{const valid=Number.isSafeInteger(qty)&&qty>=0;return `<div class="goal-model-fields"><strong id="mg-model-${index}">${esc(model.name)}${model.active===false?' (inativo)':''}</strong><div class="form-grid"><div class="field"><label id="mg-sheet-label-${index}" for="mg-sheet-${index}">Fichas</label><input aria-labelledby="mg-model-${index} mg-sheet-label-${index}" id="mg-sheet-${index}" inputmode="numeric" pattern="[0-9]*" value="${valid?Math.floor(qty/72):qty==null||qty===''?'':'Revisar meta'}" placeholder="0"></div><div class="field"><label id="mg-pairs-label-${index}" for="mg-pairs-${index}">Pares avulsos (0 a 71)</label><input aria-labelledby="mg-model-${index} mg-pairs-label-${index}" id="mg-pairs-${index}" inputmode="numeric" pattern="[0-9]*" value="${valid?qty%72:''}" placeholder="0"></div></div><p class="sub" id="mg-preview-${index}"></p></div>`}).join("")}</div>
+    <p class="notice" id="goal-plan-summary" role="status" aria-live="polite"></p><button class="btn small" id="use-goal-sum" type="button">Usar a soma como meta total</button>
     <div class="button-row" style="margin-top:14px"><button class="btn" data-modal-close>Cancelar</button><button class="btn primary" id="save-goal">Salvar meta</button></div>`,"edit");
-  document.getElementById("save-goal").onclick=()=>{
-    if(key!==currentWeekKey()||!window.fioriOnline?.canEditGoal?.()){closeModal();showToast("Os dados mudaram. Aguarde a base online e abra a meta novamente.");return}
-    const raw=document.getElementById("goal-total").value.trim();
-    if(raw&&!/^\d+$/.test(raw)){showToast("A meta deve ser um número inteiro.");return}
-    w.goal=raw?Number(raw):null;
-    for(const m of models){const v=document.getElementById("mg-"+m.id).value.trim();if(v&&!/^\d+$/.test(v)){showToast("Revise as metas por modelo.");return}w.modelGoals[m.id]=v?Number(v):null}
-    save();closeModal();render();showToast("Meta atualizada.");
+  const dialogVersion=goalDialogVersion;let used=false;
+  const current=()=>!used&&goalDialog==="edit"&&dialogVersion===goalDialogVersion&&!document.getElementById("modal").hidden;
+  const inputs=()=>fields.map(({model,index})=>({id:model.id,sheets:document.getElementById("mg-sheet-"+index).value,pairs:document.getElementById("mg-pairs-"+index).value}));
+  const preview=()=>{
+    if(!current())return;
+    let sum=0,valid=true;
+    inputs().forEach((input,index)=>{
+      const a=String(input.sheets).trim(),b=String(input.pairs).trim(),sheets=Number(a||0),pairs=Number(b||0),quantity=sheets*72+pairs;
+      const ok=(!a||/^\d+$/.test(a))&&(!b||/^\d+$/.test(b))&&Number.isSafeInteger(sheets)&&Number.isSafeInteger(pairs)&&pairs<72&&Number.isSafeInteger(quantity)&&Number.isSafeInteger(sum+quantity);
+      if(ok)sum+=quantity;else valid=false;
+      document.getElementById("mg-preview-"+index).textContent=ok?`${fmt(quantity)} pares`:"Revise a quantidade.";
+    });
+    document.getElementById("goal-plan-summary").textContent=valid?`Plano por modelo: ${fmt(sum)} pares (${FioriDashboard.materialUnitsText(sum,{pairsPerSheet:72})}). A soma precisa coincidir com a meta total.`:"Revise os campos por modelo.";
+    document.getElementById("use-goal-sum").disabled=!valid||sum<=0;
+    return valid?sum:null;
   };
+  fields.forEach(({index})=>{document.getElementById("mg-sheet-"+index).oninput=preview;document.getElementById("mg-pairs-"+index).oninput=preview});
+  document.getElementById("use-goal-sum").onclick=()=>{if(!current())return;const total=preview();if(total>0)document.getElementById("goal-total").value=String(total)};
+  document.getElementById("save-goal").onclick=()=>{
+    if(!current())return;
+    if(key!==currentWeekKey()||!window.fioriOnline?.canEditGoal?.()||baseline!==JSON.stringify(data)){closeModal();showToast("Os dados mudaram. Aguarde a base online e abra a meta novamente.");return}
+    const parsed=FioriDashboard.parseGoalInput(document.getElementById("goal-total").value,inputs());
+    if(!parsed.ok){showToast(parsed.message);return}
+    const nextGoals={...w.modelGoals,...parsed.modelGoals};
+    if(w.goal===parsed.goal&&JSON.stringify(w.modelGoals)===JSON.stringify(nextGoals)){closeModal();showToast("A meta já está salva.");return}
+    const before=data,candidate=clone(data);candidate.weeks[key].goal=parsed.goal;candidate.weeks[key].modelGoals=nextGoals;
+    used=true;data=candidate;let saved=false;
+    try{saved=save()!==false}catch(_){}
+    if(!saved){data=before;used=false;showToast("Não foi possível salvar a meta. Os dados anteriores foram preservados.");return}
+    closeModal();render();showToast("Meta registrada. Aguardando confirmação online.");
+  };
+  preview();
 }
 function onboarding(){
   const key=currentWeekKey();
@@ -526,13 +554,15 @@ function mountingStockWeekMarkup(stock,mountings,readOnly,displayState=data){
   </div>`;
 }
 function remainingWeekMarkup(w,s,readOnly,key,displayState=data){
-  const byModel={...s.byModel};
-  for(const id of Object.keys(w.modelGoals||{}))if(!Object.hasOwn(byModel,id))byModel[id]=(w.entries||[]).filter(e=>e.kind==="finished"&&e.modelId===id&&entryInWeek(e,key)&&(readOnly||e.date<=spDate())).reduce((total,e)=>total+(Number(e.qty)||0),0);
-  const plan=FioriDashboard.remainingPlan(displayState,w,byModel),remaining=Math.max(0,s.goal-s.done);
-  return `<div class="block" id="week-remaining"><h2>${readOnly?"Faltou produzir":"Falta produzir na semana"}</h2>
-    ${s.goal?`<div class="dashboard-count">${fmt(remaining)} <small>pares</small></div><div class="dashboard-quantity">${FioriDashboard.unitsText(remaining,data.settings)}</div><p class="sub">Meta salva: ${fmt(s.goal)} pares · produção da semana: ${fmt(s.done)} pares. O estoque pronto anterior não abate esta meta.</p>`:'<div class="notice">Meta semanal não definida. Defina a meta para calcular quanto falta produzir.</div>'}
-    ${plan.items.length?plan.items.filter(item=>item.remaining>0).map(item=>`<div class="row dashboard-model"><div class="row-top"><div>${dashboardModelName(item)}</div><span class="value">${fmt(item.remaining)} pares</span></div><div class="votes">${FioriDashboard.unitsText(item.remaining,data.settings)} · meta ${fmt(item.goal)} · produzidos ${fmt(item.done)}</div></div>`).join("")||'<p class="sub">As metas salvas por modelo foram atingidas.</p>':'<div class="notice">Plano por modelo não definido. Use “Editar meta” e “Metas por modelo” para informar as quantidades; sem esse plano, não é possível dizer quanto falta de cada modelo.</div>'}
+  const until=readOnly?weekEnd(key):spDate(),ledger=FioriInventory.ledger(data,{until});
+  const plan=FioriDashboard.referencePlan(displayState,w,key,until,ledger,{sourceModels:data.settings.models}),remaining=Math.max(0,s.goal-s.done);
+  const count=value=>!Number.isSafeInteger(value)||value<0?'A conferir':`${fmt(value)} pares`;
+  return `<div class="block" id="week-remaining"><h2>${readOnly?"Plano da semana arquivada":"Meta por referência"}</h2>
+    ${s.goal?`<div class="dashboard-count">${fmt(remaining)} <small>pares para produzir</small></div><div class="dashboard-quantity">${FioriDashboard.unitsText(remaining,data.settings)}</div><p class="sub">Meta salva: ${fmt(s.goal)} pares · produção da semana: ${fmt(s.done)} pares. O estoque pronto anterior não abate esta meta.</p>`:'<div class="notice">Meta semanal não definida. Defina a meta para calcular quanto falta produzir.</div>'}
+    ${plan.items.length?plan.items.map(item=>`<article class="row dashboard-model goal-reference-card" data-goal-reference="${esc(item.ref)}"><div class="row-top"><div>${dashboardModelName(item)}</div></div><div class="goal-reference-metrics"><div><span>Meta</span><strong>${count(item.goal)}</strong><small>${FioriDashboard.materialUnitsText(item.goal,{pairsPerSheet:72})}</small></div><div><span>Pronto na semana</span><strong>${count(item.done)}</strong></div><div><span>Em montagem</span><strong>${count(item.inAssembly)}</strong><small>pares de cabedal</small></div><div><span>Falta cortar</span><strong>${count(item.toCut)}</strong><small>estimativa por quantidade</small></div></div>${item.outsideAssembly>0&&item.toCut!==null?`<p class="sub">Cabedal fora da montagem: ${fmt(item.outsideAssembly)} pares, já considerado na estimativa.</p>`:''}${item.errors.length?`<p class="notice dashboard-alert">${item.errors.map(esc).join(' ')}</p>`:''}</article>`).join(""):'<div class="notice">Plano por modelo não definido. Use “Editar meta” e “Metas por modelo” para informar as quantidades; sem esse plano, não é possível dizer quanto falta de cada modelo.</div>'}
+    ${plan.items.length&&plan.items.every(item=>item.remaining===0)?'<p class="sub">As metas salvas por modelo foram atingidas.</p>':''}
     ${plan.mismatch?`<div class="notice dashboard-alert">As metas por modelo somam ${fmt(plan.total)} pares, mas a meta semanal salva é ${fmt(s.goal)}. Revise o plano.</div>`:""}
+    ${plan.items.length?'<details><summary>Como calculamos</summary><p class="sub">Falta cortar = meta − pronto produzido na semana − saldo total de cabedais ainda disponíveis, com mínimo zero. Os retornos de Produto pronto já baixam o cabedal; o saldo geral já inclui as montagens. Estoque pronto antigo, solados e palmilhas não abatem esta meta. Cabedal de semanas anteriores ainda disponível pode atender ao corte da semana.</p><p class="sub">Comparação por quantidade, sem reserva para pedidos nem conferência de cor ou numeração. Fichas são equivalência de pares, não garantia de grade completa. “Em montagem” informa cabedais, não capacidade de finalizar com os materiais. Confira a disponibilidade física antes de cortar.</p></details>':''}
   </div>`;
 }
 function mountingProductionText(row){
