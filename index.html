@@ -138,6 +138,12 @@ footer{color:var(--soft);font-size:.78rem;text-align:center;padding:8px 0 24px}
 .dashboard-details[open]>summary{margin-bottom:12px}
 .mounting-materials{border-top:1px solid var(--line);margin-top:10px;padding-top:3px;font-size:.85rem}
 .mounting-materials .row-top{flex-wrap:wrap}
+.mounting-material-summary{margin-top:10px;border-top:1px solid var(--line);padding-top:10px}
+.mounting-material-summary .sub{margin-bottom:4px}
+.mounting-material-line{padding:8px 0;font-size:.85rem}
+.mounting-material-line+.mounting-material-line{border-top:1px solid var(--line)}
+.mounting-material-count{display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-top:4px}
+.mounting-material-count strong{font-variant-numeric:tabular-nums}
 .dashboard-alert{border-color:var(--danger);color:var(--ink)}
 .dashboard-alert summary{cursor:pointer;margin-top:6px}
 .dashboard-alert ul{padding-left:20px;margin-bottom:0}
@@ -204,7 +210,7 @@ footer{color:var(--soft);font-size:.78rem;text-align:center;padding:8px 0 24px}
 <input id="backup-file" type="file" accept="application/json,.json" hidden>
 
 <script src="inventory-guard.js"></script>
-<script src="dashboard-view.js"></script>
+<script src="dashboard-view.js?v=27"></script>
 <script src="sales-receipt.js"></script>
 <script>
 "use strict";
@@ -475,7 +481,12 @@ function mountingStockWeekMarkup(stock,mountings,readOnly,displayState=data){
     ${cards.map(mt=>`<article class="mounting-card" data-mounting-card="${esc(mt.id)}"><h3>${esc(mt.name)}</h3>
       ${mt.total?`<div class="mounting-total">${fmt(mt.total)} pares de cabedal · ${FioriDashboard.unitsText(mt.total,data.settings)}</div>`:""}
       ${mt.models.map(m=>`<div class="row dashboard-model"><div class="row-top"><div>${dashboardModelName(m)}</div><span class="value">${fmt(m.qty)} pares</span></div><div class="votes">${FioriDashboard.unitsText(m.qty,data.settings)}</div>${m.colors.length?`<div class="votes">${m.colors.map(c=>`${esc(FioriInventory.colorLabel(c.color))}: ${fmt(c.qty)} pares`).join(" · ")}</div>`:""}</div>`).join("")||'<div class="empty">Sem cabedais com saldo nesta montagem.</div>'}
-      <details class="mounting-materials"><summary>Ver materiais e capacidade</summary><p class="sub">Solados e palmilhas são compartilhados pelos modelos da mesma linha e cor. Linha 300 não usa palmilha.</p>
+      ${mt.lines.length?`<div class="mounting-material-summary"><p class="sub">Fichas por quantidade · ${fmt(FioriDashboard.materialSheetSize(data.settings))} pares cada</p>
+        ${mt.lines.map(line=>`<div class="mounting-material-line" data-material-line="${esc(line.line)}"><strong>Linha ${esc(line.line)}</strong>
+          <div class="mounting-material-count"><span>Solados</span><strong>${FioriDashboard.materialUnitsText(line.solado,data.settings)}</strong></div>
+          ${line.line!=="300"||line.palmilha!==0?`<div class="mounting-material-count"><span>Palmilhas</span><strong>${FioriDashboard.materialUnitsText(line.palmilha,data.settings)}</strong></div>`:'<div class="votes">Não usa palmilha.</div>'}
+        </div>`).join("")}</div>`:""}
+      <details class="mounting-materials"><summary>Ver cores dos materiais e capacidade</summary><p class="sub">Solados e palmilhas são compartilhados pelos modelos da mesma linha e cor. Linha 300 não usa palmilha. A conversão em fichas considera a quantidade de pares; não confirma uma grade completa de cores e tamanhos.</p>
         ${mt.lines.map(line=>`<div class="row"><strong>Linha ${esc(line.line)}</strong>${line.colors.map(c=>`<div class="votes">${c.sector==="solado"?"Solado":"Palmilha"} · ${esc(FioriInventory.colorLabel(c.color))}: ${fmt(c.qty)} pares</div>`).join("")}</div>`).join("")||'<div class="empty">Sem materiais com saldo nesta montagem.</div>'}
         <div class="calc">Com os materiais e cores registrados, esta montagem pode produzir <strong>${fmt(possibleForMounting(mt.balance))} pares</strong> no total.</div>
       </details></article>`).join("")||'<div class="empty">Cadastre uma montagem em Ajustes.</div>'}

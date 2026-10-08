@@ -191,5 +191,5 @@ test('HTML-like client/reference data is assigned as text, never injected into t
 });
 test('receipt script is loaded and cached for offline installed apps',()=>{
   const sw=fs.readFileSync(path.join(__dirname,'../sw.js'),'utf8');
-  assert.match(html,/<script src="sales-receipt\.js"><\/script>/);assert.match(sw,/"\.\/sales-receipt\.js"/);assert.match(sw,/shell-v26/);
+  assert.match(html,/<script src="sales-receipt\.js"><\/script>/);assert.match(sw,/"\.\/sales-receipt\.js"/);assert.match(sw,/shell-v\d+/);
 });
