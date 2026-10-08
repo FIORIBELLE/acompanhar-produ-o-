@@ -1,5 +1,5 @@
 "use strict";
-const CACHE="acompanhar-producao-shell-v28";
+const CACHE="acompanhar-producao-shell-v29";
 const SHELL=["./","./index.html","./manifest.webmanifest","./inventory-guard.js","./dashboard-view.js?v=27","./sales-receipt.js","./sales-order.js?v=28","./order-fulfillment.js?v=28","./finance-preview.js?v=28"];
 
 self.addEventListener("install",event=>{
@@ -25,3 +25,4 @@ self.addEventListener("fetch",event=>{
   }
   if(isShellFile)event.respondWith(caches.match(request).then(cached=>cached||fetch(request).then(response=>{const copy=response.clone();caches.open(CACHE).then(cache=>cache.put(request,copy));return response})));
 });
+

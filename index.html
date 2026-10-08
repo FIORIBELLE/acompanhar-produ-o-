@@ -167,7 +167,7 @@ footer{color:var(--soft);font-size:.78rem;text-align:center;padding:8px 0 24px}
 </style>
 
 <style id="remote-sync-style">
-.remote-lock .wrap{display:none}
+.remote-lock .wrap,.remote-lock #modal{display:none}
 .remote-auth{min-height:100vh;display:grid;place-items:center;padding:20px;background:var(--bg,#f3f4f5);color:var(--ink,#18212e)}
 .remote-auth[hidden]{display:none}
 .remote-auth-card{width:min(100%,430px);background:var(--card,#fff);border:1px solid var(--line,#d9dde2);border-radius:16px;padding:22px;box-shadow:0 12px 38px rgba(0,0,0,.08)}
@@ -214,7 +214,7 @@ footer{color:var(--soft);font-size:.78rem;text-align:center;padding:8px 0 24px}
     <button class="btn" id="edit-goal" type="button">Editar meta</button>
     <button class="btn primary" id="share" type="button">Compartilhar resumo</button>
   </div>
-  <footer id="app-footer">Base online Fiori Belle · sincronização automática · v2026.10.06-r7.3</footer>
+  <footer id="app-footer">Base online Fiori Belle · sincronização automática · v2026.10.08-r8.1</footer>
 </div>
 
 <div class="toast" id="toast" hidden role="status" aria-live="polite"></div>
@@ -255,7 +255,7 @@ const DEFAULTS={
 };
 let data=loadData();
 let ui={tab:"week",viewWeek:null,editingEntry:null};
-let toastTimer=null;
+let toastTimer=null,goalDialog=null,goalDialogVersion=0;
 
 function clone(v){return JSON.parse(JSON.stringify(v))}
 function loadData(){
@@ -350,7 +350,7 @@ function previousGoal(key){
   return keys.length?Number(data.weeks[keys[0]].goal):null;
 }
 function ensureWeek(key=currentWeekKey()){
-  if(!data.weeks[key])data.weeks[key]={goal:previousGoal(key),modelGoals:{},entries:[],modelSnapshot:clone(activeModels()),mountingSnapshot:clone(activeMountings()),createdAt:new Date().toISOString()};
+  if(!data.weeks[key])data.weeks[key]={goal:null,modelGoals:{},entries:[],modelSnapshot:clone(activeModels()),mountingSnapshot:clone(activeMountings()),createdAt:new Date().toISOString()};
   const w=data.weeks[key];
   if(!Array.isArray(w.entries))w.entries=[];
   if(!w.modelGoals||typeof w.modelGoals!=="object")w.modelGoals={};
@@ -435,19 +435,21 @@ function fichasText(pairs){
 function showToast(message){
   const el=document.getElementById("toast");el.textContent=message;el.hidden=false;clearTimeout(toastTimer);toastTimer=setTimeout(()=>el.hidden=true,2600);
 }
-function showModal(html){document.getElementById("modal-sheet").innerHTML=html;document.getElementById("modal").hidden=false}
-function closeModal(){document.getElementById("modal").hidden=true;document.getElementById("modal-sheet").innerHTML=""}
+function showModal(html,kind=null){goalDialog=kind;goalDialogVersion++;document.getElementById("modal-sheet").innerHTML=html;document.getElementById("modal").hidden=false}
+function closeModal(){goalDialog=null;goalDialogVersion++;document.getElementById("modal").hidden=true;document.getElementById("modal-sheet").innerHTML=""}
 function confirmAction({title,message,confirmText="Confirmar",danger=false,onConfirm}){
   showModal(`<h2 id="modal-title">${esc(title)}</h2><p>${esc(message)}</p><div class="button-row"><button class="btn" data-modal-close>Cancelar</button><button class="btn ${danger?"danger":"primary"}" id="modal-confirm">${esc(confirmText)}</button></div>`);
   document.getElementById("modal-confirm").onclick=()=>{closeModal();onConfirm()};
 }
 function goalModal(){
+  if(!window.fioriOnline?.canEditGoal?.()){showToast("Entre e aguarde a confirmação da base online antes de editar a meta.");return}
   const key=currentWeekKey(),w=ensureWeek(key),models=activeModels();
   showModal(`<h2 id="modal-title">Meta da semana</h2><p class="sub">Semana de ${weekLabel(key)}. Use números inteiros em pares.</p>
     <div class="field"><label for="goal-total">Meta total em pares</label><input id="goal-total" inputmode="numeric" pattern="[0-9]*" value="${w.goal||""}" placeholder="Ex.: 1224"></div>
     <details><summary>Metas opcionais por modelo</summary><div class="settings-list">${models.map(m=>`<div class="model-goal-grid"><label for="mg-${m.id}">${esc(m.name)}</label><input id="mg-${m.id}" inputmode="numeric" pattern="[0-9]*" value="${w.modelGoals[m.id]||""}" placeholder="Sem meta"></div>`).join("")}</div></details>
-    <div class="button-row" style="margin-top:14px"><button class="btn" data-modal-close>Cancelar</button><button class="btn primary" id="save-goal">Salvar meta</button></div>`);
+    <div class="button-row" style="margin-top:14px"><button class="btn" data-modal-close>Cancelar</button><button class="btn primary" id="save-goal">Salvar meta</button></div>`,"edit");
   document.getElementById("save-goal").onclick=()=>{
+    if(key!==currentWeekKey()||!window.fioriOnline?.canEditGoal?.()){closeModal();showToast("Os dados mudaram. Aguarde a base online e abra a meta novamente.");return}
     const raw=document.getElementById("goal-total").value.trim();
     if(raw&&!/^\d+$/.test(raw)){showToast("A meta deve ser um número inteiro.");return}
     w.goal=raw?Number(raw):null;
@@ -457,14 +459,22 @@ function goalModal(){
 }
 function onboarding(){
   const key=currentWeekKey();
+  if(!window.fioriOnline?.needsGoal?.(key))return;
   showModal(`<h2 id="modal-title">Comece pela meta</h2><p>Este app controla cabedais por modelo e palmilhas e solados por linha.</p>
     <ul><li>Defina a meta semanal.</li><li>Escolha a montagem e lance cabedais por modelo ou palmilhas e solados por linha.</li><li>Ao lançar a produção pronta, o cabedal do modelo e os componentes da linha são baixados automaticamente.</li></ul>
     <div class="field"><label for="first-goal">Meta desta semana em pares</label><input id="first-goal" inputmode="numeric" pattern="[0-9]*" placeholder="Digite a meta"></div>
-    <button class="btn primary full" id="start-app">Começar</button>`);
-  document.getElementById("start-app").onclick=()=>{
-    const raw=document.getElementById("first-goal").value.trim();
-    if(!/^\d+$/.test(raw)||Number(raw)<=0){showToast("Digite uma meta maior que zero.");return}
-    ensureWeek(key).goal=Number(raw);data.onboardingDone=true;save();closeModal();render();
+    <button class="btn primary full" id="start-app">Começar</button>`,"onboarding");
+  const button=document.getElementById("start-app"),dialogVersion=goalDialogVersion;
+  let submitting=false;
+  button.onclick=async()=>{
+    if(submitting)return;
+    if(key!==currentWeekKey()||!window.fioriOnline?.needsGoal?.(key)){closeModal();showToast("Confira a meta confirmada na base online antes de continuar.");return}
+    const raw=document.getElementById("first-goal").value.trim(),goal=Number(raw);
+    if(!/^\d+$/.test(raw)||!Number.isSafeInteger(goal)||goal<=0){showToast("Digite uma meta inteira maior que zero.");return}
+    submitting=true;button.disabled=true;
+    try{await window.fioriOnline.setInitialGoal(key,goal,dialogVersion)}
+    catch(_){showToast("Não foi possível conferir a meta online. Confira a conexão e tente novamente.")}
+    finally{submitting=false;button.disabled=false}
   };
 }
 function readyStockForWeek(){
@@ -822,7 +832,7 @@ document.getElementById("backup-file").onchange=e=>{const f=e.target.files?.[0];
 document.getElementById("modal").onclick=e=>{if(e.target.id==="modal"||e.target.closest("[data-modal-close]"))closeModal()};
 document.addEventListener("keydown",e=>{if(e.key==="Escape"&&!document.getElementById("modal").hidden)closeModal()});
 makeIcon();render();
-if(!data.onboardingDone)setTimeout(onboarding,80);
+// Goal onboarding is decided only after authentication and a confirmed online read.
 if("serviceWorker" in navigator)navigator.serviceWorker.register("sw.js").catch(()=>{});
 </script>
 
@@ -1503,27 +1513,47 @@ if("serviceWorker" in navigator)navigator.serviceWorker.register("sw.js").catch(
   "use strict";
   const SUPABASE_URL="https://yvrldummgbjymlflvjsz.supabase.co",SUPABASE_KEY="sb_publishable_G2I9_xig0lJCPYje-D9NrQ_P77Pkyb7",WORKSPACE_ID="3ab84382-193b-4e69-8d1d-4e02847cef8f",ACTIVATE_URL=SUPABASE_URL+"/functions/v1/activate-owner";
   const PENDING_KEY="acompanhar_producao_remote_pending_v2",LEGACY_PENDING_KEY="acompanhar_producao_remote_pending_v1",CONFLICT_KEY="acompanhar_producao_remote_conflict_v1",ORPHAN_KEY="acompanhar_producao_presync_recovery_v1";
+  if(!window.supabase?.createClient){
+    closeModal();document.getElementById("remote-auth-msg").textContent="Não foi possível iniciar a conexão. Confira a internet e recarregue a página.";return;
+  }
   const sb=window.supabase.createClient(SUPABASE_URL,SUPABASE_KEY,{auth:{persistSession:true,autoRefreshToken:true,detectSessionInUrl:true}});
   let remoteRevision=0,saveTimer=null,flushPromise=null,applyingRemote=false,realtimeChannel=null,syncConflict=false;
+  let authenticated=false,authenticatedUser=null,remoteReady=false,confirmedData=null,loadSequence=0,promptedWeek=null;
+  const canWrite=()=>authenticated&&remoteReady;
+  const canEditGoal=()=>canWrite()&&!hasPending()&&!syncConflict;
+  const needsGoal=key=>canEditGoal()&&key===currentWeekKey()&&!(Number(confirmedData?.weeks?.[key]?.goal)>0);
+  function reconcileGoalPrompt(){
+    if(!canEditGoal()){if(goalDialog)closeModal();return}
+    const key=currentWeekKey();
+    if(needsGoal(key)){if(promptedWeek!==key&&document.getElementById("modal").hidden){promptedWeek=key;onboarding()}}
+    else if(goalDialog==="onboarding")closeModal();
+  }
   const authRoot=document.getElementById("remote-auth"),authMsg=document.getElementById("remote-auth-msg"),loginForm=document.getElementById("remote-login-form"),activateForm=document.getElementById("remote-activate-form"),firstAccess=document.getElementById("remote-first-access");
   const setStatus=text=>{const el=document.getElementById("header-status");if(el)el.textContent=text};
   const authMessage=(text,error=false)=>{authMsg.textContent=text||"";authMsg.classList.toggle("error",!!error)};
-  const unlock=()=>{document.body.classList.remove("remote-lock");authRoot.hidden=true},lock=()=>{document.body.classList.add("remote-lock");authRoot.hidden=false};
+  const unlock=()=>{document.body.classList.remove("remote-lock");authRoot.hidden=true},lock=()=>{
+    authenticated=false;authenticatedUser=null;remoteReady=false;confirmedData=null;promptedWeek=null;loadSequence++;clearTimeout(saveTimer);
+    closeModal();document.body.classList.add("remote-lock");authRoot.hidden=false;
+  };
   function readPending(){try{return JSON.parse(localStorage.getItem(PENDING_KEY)||"null")}catch(_){return null}}
   function writePending(v){if(v)localStorage.setItem(PENDING_KEY,JSON.stringify(v));else localStorage.removeItem(PENDING_KEY)}
   const hasPending=()=>!!readPending(),deepEqual=(a,b)=>{try{return JSON.stringify(a)===JSON.stringify(b)}catch(_){return false}};
   function setConflict(localPending,remoteRow,reason){syncConflict=true;localStorage.setItem(CONFLICT_KEY,JSON.stringify({detectedAt:new Date().toISOString(),reason:String(reason||"revision conflict"),local:localPending,remote:{revision:Number(remoteRow?.revision||0),updated_at:remoteRow?.updated_at||null,data:remoteRow?.data||null}}));setStatus("Conflito protegido · não altere até revisar");showModal(`<h2 id="modal-title">Conflito protegido</h2><p>Há uma alteração deste aparelho e outra versão mais nova na base online.</p><p><strong>Nenhum dos dois lados foi apagado.</strong> Não faça novos lançamentos neste aparelho até revisar o conflito.</p><button class="btn primary full" data-modal-close>Entendi</button>`)}
-  function applyRemote(row,announce=false){if(!row||!row.data||hasPending()||syncConflict)return;applyingRemote=true;remoteRevision=Number(row.revision||0);localStorage.setItem(STORAGE_KEY,JSON.stringify(row.data));data=loadData();applyingRemote=false;try{render()}catch(_){}setStatus("Base online · sincronizada");if(announce)showToast("Dados atualizados pela base online.")}
-  async function fetchRemoteState(){const {data:row,error}=await sb.from("app_state").select("data,revision,updated_at").eq("workspace_id",WORKSPACE_ID).single();if(error)throw error;return row}
+  function applyRemote(row,announce=false){if(!row||!row.data||Number(row.revision||0)<remoteRevision||hasPending()||syncConflict)return;if(goalDialog)closeModal();confirmedData=clone(row.data);applyingRemote=true;remoteRevision=Number(row.revision||0);localStorage.setItem(STORAGE_KEY,JSON.stringify(row.data));data=loadData();applyingRemote=false;try{render()}catch(_){}setStatus("Base online · sincronizada");reconcileGoalPrompt();if(announce)showToast("Dados atualizados pela base online.")}
+  async function fetchRemoteState(){const {data:row,error}=await sb.from("app_state").select("data,revision,updated_at").eq("workspace_id",WORKSPACE_ID).single();if(error)throw error;if(!row||!row.data||typeof row.data!=="object"||Array.isArray(row.data)||!row.data.weeks||typeof row.data.weeks!=="object"||Array.isArray(row.data.weeks))throw new Error("Base online indisponível");return row}
   function scheduleFlush(delay=180){clearTimeout(saveTimer);saveTimer=setTimeout(()=>flushRemoteSave(),delay)}
   async function restorePendingOrRemote(row){
+    confirmedData=clone(row.data);
     remoteRevision=Number(row.revision||0);
     const pending=readPending();
     if(!pending){
       localStorage.removeItem(CONFLICT_KEY);syncConflict=false;applyRemote(row);return;
     }
-    if(Number(pending.baseRevision||0)===0&&remoteRevision>0){
-      try{localStorage.setItem(ORPHAN_KEY,JSON.stringify({archivedAt:new Date().toISOString(),reason:"estado local criado antes da primeira sincronização",pending}))}catch(_){}
+    if(Number(pending.baseRevision||0)===0&&pending.hydrated!==true&&!deepEqual(pending.data,row.data)){
+      try{
+        const previousArchive=localStorage.getItem(ORPHAN_KEY);
+        localStorage.setItem(ORPHAN_KEY,JSON.stringify({archivedAt:new Date().toISOString(),reason:"estado local criado antes da primeira sincronização",pending,...(previousArchive?{previousArchive}:{})}));
+      }catch(_){setConflict(pending,row,"Não foi possível preservar a pendência anterior. Libere espaço e tente novamente.");return}
       writePending(null);localStorage.removeItem(CONFLICT_KEY);syncConflict=false;applyRemote(row);
       showToast("Base online carregada. Estado local anterior foi isolado e não alterou a base.");
       return;
@@ -1535,19 +1565,127 @@ if("serviceWorker" in navigator)navigator.serviceWorker.register("sw.js").catch(
     }
     setConflict(pending,row,"base changed while local change was pending");
   }
-  async function loadRemoteState(){setStatus("Carregando base online…");const row=await fetchRemoteState();await restorePendingOrRemote(row);unlock();subscribeRealtime()}
-  function subscribeRealtime(){if(realtimeChannel)return;realtimeChannel=sb.channel("fiori-belle-producao-state").on("postgres_changes",{event:"UPDATE",schema:"public",table:"app_state",filter:"workspace_id=eq."+WORKSPACE_ID},payload=>{const row=payload.new;if(!row)return;if(hasPending()||flushPromise||syncConflict){setStatus("Sincronizando · atualização remota aguardando");return}if(Number(row.revision||0)>remoteRevision)applyRemote(row,true)}).subscribe()}
-  async function flushRemoteSave(){if(flushPromise||syncConflict)return flushPromise;flushPromise=(async()=>{while(true){const pending=readPending();if(!pending)break;const {data:{session}}=await sb.auth.getSession();if(!session){setStatus("Entre para sincronizar");break}setStatus("Sincronizando…");const sentVersion=Number(pending.localVersion||1),sentData=clone(pending.data);const {data:result,error}=await sb.rpc("save_app_state",{p_workspace_id:WORKSPACE_ID,p_data:sentData,p_expected_revision:remoteRevision});if(error){const msg=String(error.message||error||"");if(String(error.code)==="23514"){setStatus("Estoque recusado · corrija o lançamento pendente");showToast(msg)}else if(msg.toLowerCase().includes("revision conflict")){const latest=await fetchRemoteState();setConflict(readPending()||pending,latest,msg)}else{setStatus(navigator.onLine?"Erro de sincronização · pendente":"Sem internet · pendente");showToast("Alteração preservada neste aparelho e pendente de sincronização.")}break}const row=Array.isArray(result)?result[0]:result;remoteRevision=Number(row?.new_revision||remoteRevision+1);const current=readPending();if(!current||Number(current.localVersion||0)===sentVersion){writePending(null);localStorage.removeItem(CONFLICT_KEY);setStatus("Base online · confirmada");showToast("Alterações confirmadas na base online.");break}current.baseRevision=remoteRevision;writePending(current)}})().finally(()=>{flushPromise=null});return flushPromise}
+  async function loadRemoteState(){
+    const sequence=++loadSequence;remoteReady=false;closeModal();setStatus("Carregando base online…");
+    try{
+      const {data:{session}}=await sb.auth.getSession();
+      if(sequence!==loadSequence)return false;
+      if(!session){lock();authMessage("Entre para acessar a base online.",true);return false}
+      authenticated=true;authenticatedUser=session.user?.id||null;
+      const row=await fetchRemoteState();
+      if(sequence!==loadSequence||!authenticated)return false;
+      await restorePendingOrRemote(row);
+      if(sequence!==loadSequence||!authenticated)return false;
+      remoteReady=true;unlock();subscribeRealtime();reconcileGoalPrompt();return true;
+    }catch(_){
+      if(sequence===loadSequence){lock();authMessage("Não foi possível carregar a base online. Confira a conexão e o acesso da conta e tente entrar novamente.",true)}
+      return false;
+    }
+  }
+  async function setInitialGoal(key,goal,dialogVersion){
+    const sequence=loadSequence;
+    const stillAllowed=()=>sequence===loadSequence&&needsGoal(key)&&goalDialog==="onboarding"&&goalDialogVersion===dialogVersion;
+    if(!stillAllowed()||!Number.isSafeInteger(goal)||goal<=0)return false;
+    const {data:{session}}=await sb.auth.getSession();
+    if(!stillAllowed())return false;
+    if(!session){lock();return false}
+    const row=await fetchRemoteState();
+    if(!stillAllowed())return false;
+    if(Number(row.data?.weeks?.[key]?.goal)>0||Number(row.revision||0)!==remoteRevision){
+      applyRemote(row,true);showToast("A base online mudou. Confira a meta antes de continuar.");return false;
+    }
+    confirmedData=clone(row.data);
+    ensureWeek(key).goal=goal;data.onboardingDone=true;save();closeModal();render();return true;
+  }
+  function subscribeRealtime(){if(realtimeChannel)return;realtimeChannel=sb.channel("fiori-belle-producao-state").on("postgres_changes",{event:"UPDATE",schema:"public",table:"app_state",filter:"workspace_id=eq."+WORKSPACE_ID},payload=>{const row=payload.new;if(!row||!canWrite())return;if(hasPending()||flushPromise||syncConflict){setStatus("Sincronizando · atualização remota aguardando");return}if(Number(row.revision||0)>remoteRevision)applyRemote(row,true)}).subscribe()}
+  async function flushRemoteSave(){
+    if(!canWrite()||flushPromise||syncConflict)return flushPromise;
+    const sequence=loadSequence,currentSession=()=>sequence===loadSequence&&canWrite();
+    flushPromise=(async()=>{
+      while(currentSession()){
+        const pending=readPending();if(!pending)break;
+        const {data:{session}}=await sb.auth.getSession();
+        if(!currentSession())break;
+        if(!session){lock();setStatus("Entre para sincronizar");break}
+        setStatus("Sincronizando…");
+        const sentVersion=Number(pending.localVersion||1),sentData=clone(pending.data);
+        const {data:result,error}=await sb.rpc("save_app_state",{p_workspace_id:WORKSPACE_ID,p_data:sentData,p_expected_revision:remoteRevision});
+        if(!currentSession())break;
+        if(error){
+          const msg=String(error.message||error||"");
+          if(String(error.code)==="23514"){setStatus("Estoque recusado · corrija o lançamento pendente");showToast(msg)}
+          else if(msg.toLowerCase().includes("revision conflict")){
+            const latest=await fetchRemoteState();if(currentSession())setConflict(readPending()||pending,latest,msg);
+          }else{setStatus(navigator.onLine?"Erro de sincronização · pendente":"Sem internet · pendente");showToast("Alteração preservada neste aparelho e pendente de sincronização.")}
+          break;
+        }
+        const row=Array.isArray(result)?result[0]:result;
+        remoteRevision=Number(row?.new_revision||remoteRevision+1);confirmedData=clone(sentData);
+        const current=readPending();
+        if(!current||Number(current.localVersion||0)===sentVersion){
+          writePending(null);localStorage.removeItem(CONFLICT_KEY);setStatus("Base online · confirmada");showToast("Alterações confirmadas na base online.");break;
+        }
+        current.baseRevision=remoteRevision;writePending(current);
+      }
+    })().catch(()=>{if(currentSession()){setStatus("Erro de sincronização · pendente");showToast("Alteração preservada neste aparelho. Confira a conexão.")}}).finally(()=>{
+      flushPromise=null;reconcileGoalPrompt();
+      if(sequence!==loadSequence&&canWrite()&&hasPending()&&!syncConflict)scheduleFlush(20);
+    });
+    return flushPromise;
+  }
   const originalSave=save;
-  save=function(){originalSave();if(applyingRemote)return;const current=readPending();writePending({data:clone(data),baseRevision:current?.baseRevision??remoteRevision,localVersion:Number(current?.localVersion||0)+1,savedAt:new Date().toISOString()});if(syncConflict){setStatus("Conflito protegido · alteração preservada localmente");return}setStatus("Aguardando confirmação online…");scheduleFlush()};
-  window.addEventListener("online",()=>{if(hasPending()&&!syncConflict)scheduleFlush(20)});
-  window.addEventListener("focus",async()=>{const {data:{session}}=await sb.auth.getSession();if(!session)return;if(hasPending()){if(!syncConflict)scheduleFlush(20);return}try{const row=await fetchRemoteState();if(Number(row.revision||0)>remoteRevision)applyRemote(row,true)}catch(_){}});
+  save=function(){if(!canWrite()){showToast("Entre e aguarde a base online antes de salvar.");return false}originalSave();if(applyingRemote)return;const current=readPending();writePending({data:clone(data),hydrated:true,baseRevision:current?.baseRevision??remoteRevision,localVersion:Number(current?.localVersion||0)+1,savedAt:new Date().toISOString()});if(syncConflict){setStatus("Conflito protegido · alteração preservada localmente");return}setStatus("Aguardando confirmação online…");scheduleFlush()};
+  window.addEventListener("online",()=>{if(canWrite()&&hasPending()&&!syncConflict)scheduleFlush(20)});
+  window.addEventListener("focus",async()=>{
+    const sequence=loadSequence;
+    const {data:{session}}=await sb.auth.getSession();
+    if(sequence!==loadSequence)return;
+    if(!session){lock();return}if(!canWrite())return;
+    if(hasPending()){if(!syncConflict)scheduleFlush(20);return}
+    try{const row=await fetchRemoteState();if(sequence===loadSequence&&canWrite()&&Number(row.revision||0)>remoteRevision)applyRemote(row,true)}catch(_){}
+  });
   firstAccess.onclick=()=>{activateForm.hidden=!activateForm.hidden;authMessage(activateForm.hidden?"":"Use o código de ativação informado pelo administrador.")};
-  loginForm.onsubmit=async e=>{e.preventDefault();const email=document.getElementById("remote-email").value.trim(),password=document.getElementById("remote-password").value;authMessage("Entrando…");const {error}=await sb.auth.signInWithPassword({email,password});if(error){authMessage("E-mail ou senha inválidos.",true);return}try{await loadRemoteState();authMessage("")}catch(err){await sb.auth.signOut();lock();authMessage("Esta conta ainda não tem acesso à base Fiori Belle.",true)}};
-  activateForm.onsubmit=async e=>{e.preventDefault();const email=document.getElementById("remote-email").value.trim(),password=document.getElementById("remote-password").value,activationCode=document.getElementById("remote-activation-code").value.trim();if(!email||password.length<8){authMessage("Preencha o e-mail e use uma senha com pelo menos 8 caracteres.",true);return}authMessage("Criando acesso…");try{const res=await fetch(ACTIVATE_URL,{method:"POST",headers:{"Content-Type":"application/json","apikey":SUPABASE_KEY},body:JSON.stringify({email,password,activationCode})});const body=await res.json().catch(()=>({}));if(!res.ok)throw new Error(body.error||"Não foi possível criar o acesso.");const {error}=await sb.auth.signInWithPassword({email,password});if(error)throw error;await loadRemoteState();authMessage("");showToast("Acesso criado. Base online conectada.")}catch(err){authMessage(String(err?.message||"Não foi possível criar o acesso."),true)}};
-  async function start(){lock();if(localStorage.getItem(LEGACY_PENDING_KEY)==="1"&&!localStorage.getItem(PENDING_KEY))setStatus("Há uma pendência da versão anterior. Não altere dados até conferir.");if(localStorage.getItem(CONFLICT_KEY))syncConflict=true;const {data:{session}}=await sb.auth.getSession();if(!session){setStatus("Entre para acessar a base online");return}try{await loadRemoteState()}catch(err){await sb.auth.signOut();lock();authMessage("Sua sessão não tem acesso à base Fiori Belle.",true)}}
-  window.fioriOnline={onlineMode:true,signOut:async()=>{if(hasPending())throw new Error("Há alterações pendentes; aguarde a confirmação.");await sb.auth.signOut();location.reload()},refresh:async()=>{if(hasPending()||syncConflict)throw new Error("Há alteração pendente ou conflito protegido.");const row=await fetchRemoteState();applyRemote(row,true)},getConfirmedState:fetchRemoteState,hasPending,flush:flushRemoteSave,conflict:()=>syncConflict};start();
+  let authBusy=false;
+  loginForm.onsubmit=async e=>{
+    e.preventDefault();if(authBusy)return;authBusy=true;lock();const sequence=loadSequence;
+    const email=document.getElementById("remote-email").value.trim(),password=document.getElementById("remote-password").value;
+    authMessage("Entrando…");
+    try{
+      const {error}=await sb.auth.signInWithPassword({email,password});
+      if(sequence!==loadSequence)return;
+      if(error){authMessage("E-mail ou senha inválidos.",true);return}
+      if(await loadRemoteState())authMessage("");
+    }catch(_){if(sequence===loadSequence){lock();authMessage("Não foi possível entrar. Confira a conexão e tente novamente.",true)}}
+    finally{authBusy=false}
+  };
+  activateForm.onsubmit=async e=>{
+    e.preventDefault();if(authBusy)return;authBusy=true;lock();const sequence=loadSequence;
+    const email=document.getElementById("remote-email").value.trim(),password=document.getElementById("remote-password").value,activationCode=document.getElementById("remote-activation-code").value.trim();
+    try{
+      if(!email||password.length<8){authMessage("Preencha o e-mail e use uma senha com pelo menos 8 caracteres.",true);return}
+      authMessage("Criando acesso…");
+      const res=await fetch(ACTIVATE_URL,{method:"POST",headers:{"Content-Type":"application/json","apikey":SUPABASE_KEY},body:JSON.stringify({email,password,activationCode})});
+      const body=await res.json().catch(()=>({}));if(sequence!==loadSequence)return;
+      if(!res.ok)throw new Error(body.error||"Não foi possível criar o acesso.");
+      const {error}=await sb.auth.signInWithPassword({email,password});if(sequence!==loadSequence)return;if(error)throw error;
+      if(await loadRemoteState()){authMessage("");showToast("Acesso criado. Base online conectada.")}
+    }catch(err){if(sequence===loadSequence)authMessage(String(err?.message||"Não foi possível criar o acesso."),true)}
+    finally{authBusy=false}
+  };
+  async function start(){
+    lock();const sequence=loadSequence;
+    if(localStorage.getItem(LEGACY_PENDING_KEY)==="1"&&!localStorage.getItem(PENDING_KEY))setStatus("Há uma pendência da versão anterior. Não altere dados até conferir.");
+    if(localStorage.getItem(CONFLICT_KEY))syncConflict=true;
+    try{
+      const {data:{session}}=await sb.auth.getSession();if(sequence!==loadSequence)return;
+      if(!session){setStatus("Entre para acessar a base online");return}
+      await loadRemoteState();
+    }catch(_){if(sequence===loadSequence){lock();authMessage("Não foi possível conferir a sessão. Confira a conexão e tente novamente.",true)}}
+  }
+  sb.auth.onAuthStateChange((event,session)=>{if(!session||(authenticated&&session.user?.id!==authenticatedUser)){lock();setStatus("Entre para acessar a base online")}});
+  window.fioriOnline={onlineMode:true,canEditGoal,needsGoal,setInitialGoal,signOut:async()=>{if(hasPending())throw new Error("Há alterações pendentes; aguarde a confirmação.");lock();await sb.auth.signOut();location.reload()},refresh:async()=>{if(!canWrite())throw new Error("Entre e aguarde a base online.");if(hasPending()||syncConflict)throw new Error("Há alteração pendente ou conflito protegido.");const sequence=loadSequence,row=await fetchRemoteState();if(sequence===loadSequence&&canWrite())applyRemote(row,true)},getConfirmedState:fetchRemoteState,hasPending,flush:flushRemoteSave,conflict:()=>syncConflict};start();
 })();
 </script>
 </body>
 </html>
+

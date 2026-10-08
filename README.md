@@ -41,3 +41,16 @@ A consulta por pares e tarifa é uma simulação sem gravação. Ela não reconc
 O formato financeiro existente exige pelo menos um abatimento em cada acerto; sem abatimento, a interface informa essa limitação e não cria o registro. Não há migração, campo financeiro paralelo, inferência de pagamento histórico nem alteração de controles no banco. O formulário Novo gasto continua separado.
 
 Os testes financeiros usam dados sintéticos e verificam simulação sem escrita, valores em centavos, confirmação e cancelamento, clique repetido, alterações enquanto a confirmação está aberta, sincronização pendente e acerto sem novo pagamento líquido.
+
+
+## Login e meta semanal — v2026.10.08-r8.1
+
+A tela de login aparece antes de qualquer janela de meta. O app só oferece “Comece pela meta” depois de autenticar e carregar a base online com sucesso, quando a semana atual ainda não tem meta positiva registrada. O indicador local `onboardingDone` não decide mais essa abertura. Metas de semanas anteriores permanecem no histórico, sem serem copiadas automaticamente para a semana nova.
+
+Antes de salvar a primeira meta, o app confere novamente a base online. Se outra pessoa ou aparelho já definiu a meta, a versão online prevalece. A gravação continua usando a revisão esperada da base; alterações concorrentes ficam protegidas para conferência. Falta de internet, erro ao carregar e saída da conta não são tratados como ausência de meta.
+
+Nenhuma estrutura ou registro da base online foi migrado nesta correção. A recuperação local mantém alterações pendentes válidas, isola estados antigos criados antes da primeira sincronização e preserva arquivos de recuperação anteriores. Uma falha ao preservar a recuperação impede que a pendência seja removida. O cache do aplicativo foi atualizado para v29.
+
+`tests/meta-login.test.js` executa o fluxo de autenticação e sincronização com Supabase simulado e dados fictícios, sem rede nem acesso à base real. Inclui aparelho novo, sessão existente, leitura lenta/falha, meta já existente, semana nova, cliques repetidos, fechamento da janela, logout, atualizações concorrentes, respostas antigas, restauração de pendências e falhas de recuperação. Execute junto aos demais testes:
+
+    node --test tests/*.test.js
