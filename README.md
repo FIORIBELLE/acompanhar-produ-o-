@@ -102,3 +102,22 @@ No Início, cada referência do plano mostra meta, produto pronto produzido na s
 O resultado é uma estimativa por quantidade: não faz reserva para pedidos, não garante disponibilidade física, cores, numeração nem grade completa de fichas. Erros de estoque, meta inválida, referência ambígua ou saldo incoerente suspendem a estimativa, mostrando “A conferir”. Sem plano, não é inferida uma distribuição. Semanas arquivadas continuam somente leitura e preservam seus snapshots.
 
 O cache passa a v32. Os testes sintéticos cobrem conversão, sobras, soma, limites, estoque antigo, cabedal externo, retorno sem duplicação, materiais compartilhados, datas, inconsistência, histórico, cancelamento, repetição, concorrência e falhas de salvamento. O Chromium deste executor não iniciou devido à restrição de socket, inclusive na tentativa de execução com permissões ampliadas; a inspeção visual desta versão não foi concluída.
+
+## Ficha padrão por cor e numeração — r8.5
+
+A unidade Fichas e o botão +1 ficha na aba Lançar preenchem a grade antes de salvar. Cada ficha tem 72 pares. Cores e quantidades de 35 a 39 podem ser editadas, adicionadas ou removidas do rascunho; a soma precisa coincidir com o total de fichas. O atalho preserva quantidades que já fecham fichas inteiras e pede um lançamento separado para avulsos. Fichas fracionárias não são distribuídas automaticamente. Pares e kits continuam disponíveis, exigindo cor; “Sem cor discriminada” exige uma escolha explícita na caixa correspondente.
+
+Os padrões iniciais confirmados são somente leitura até a pessoa salvar uma configuração:
+- Linha 500: Preto, Caramelo, Rose e Off White, 18 pares de cada; grade 35–39 de 3/3/6/3/3 por cor.
+- Linha 300: Preto e Caramelo com 24 pares de cada (4/4/8/4/4), Rose e Off White com 12 pares de cada (2/2/4/2/2). Essa linha não usa palmilha.
+- Ref.315 não herda o padrão genérico da 300, pois possui variações próprias. A linha600 e demais linhas sem grade confirmada pedem configuração explícita.
+
+Ajustes oferece padrão por linha ou referência; o da referência tem prioridade. O cadastro opcional fica em settings.sheetPatterns, sem preencher ou migrar a base ao abrir o app. Cancelamento e consultas não gravam. Novos padrões mudam somente lançamentos futuros.
+
+Cada cor resulta em um registro com quantidade própria, sizeBreakdown e um identificador estável de lote. Produto pronto gera uma obrigação de montagem por registro/cor, usando a tarifa já vigente. O estado inteiro é validado pelos motores de estoque e montagem e enviado pelo CAS existente, em um salvamento. Uma cor insuficiente recusa toda a ficha. Repetir o mesmo lote não duplica produção, estoque ou obrigações; não são gerados pagamentos. A interface também cobre fichas em ajustes manuais de estoque, sem inventar mão de obra para um saldo inicial ou expedição.
+
+A grade é um detalhamento registrado, não um controle separado de saldo por tamanho: a guarda de estoque continua validando cor e quantidade. O SQL existente aceita os campos adicionais, mas não valida sua soma; a validação semântica de grade fica no módulo e na interface. Não houve DDL. Os lotes salvos ficam protegidos contra editar/apagar uma cor isoladamente; correções posteriores exigem revisão do lote completo, preservando o histórico. Registros antigos, incluindo seu campo sizes quando existente, permanecem inalterados.
+
+No Início, o aviso de pares sem cor usa somente saldos globais positivos e não soma novamente os saldos das montagens. Mostra o detalhamento por setor e esclarece que a soma de componentes não é quantidade de sapatos prontos. Divergências suspendem esse total. Nenhuma cor é atribuída retroativamente.
+
+Cache v33. Testes sintéticos cobrem padrões, exceções, edição, soma, limites, validação por cor, integridade financeira, repetição, rollback, concorrência, navegação e ausência de gravações ao consultar. Nenhum teste grava produção ou financeiro reais.

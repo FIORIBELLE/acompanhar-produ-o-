@@ -215,6 +215,6 @@ test('new dashboard script uses a cache-busted URL also precached by the service
   assert.equal(scriptUrl,'dashboard-view.js?v=32');
   const sw=fs.readFileSync(path.join(__dirname,'../sw.js'),'utf8');
   assert.ok(sw.includes('"./'+scriptUrl+'"'));
-  assert.match(sw,/shell-v32/);
+  assert.match(sw,/shell-v33/);
 });
 

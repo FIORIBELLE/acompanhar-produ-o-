@@ -25,7 +25,7 @@ function app({remote=row(),local=null,session=null,pending=null,readError=null,m
  document:{body,getElementById:node,querySelector:node,querySelectorAll(selector){if(selector==='[data-define-rate]')return ['a','b','empty'].map(id=>{const button=node('rate-button-'+id);button.dataset={defineRate:id};return button});return[]}},window,location:{reload(){}}});
  const main=scripts[0][2].slice(0,scripts[0][2].lastIndexOf('\ndocument.querySelectorAll("nav [role=tab]").forEach'));
  vm.runInContext(main,context);for(const script of scripts.slice(1).filter(m=>!m[1].includes('remote-sync-v2')))vm.runInContext(script[2],context);
- vm.runInContext('render();globalThis.testApi={settings:()=>switchTab("settings"),openRate:()=>openMountingRate("a"),getData:()=>data,save:()=>save(),onboarding:()=>onboarding(),goalModal:()=>goalModal(),closeModal:()=>closeModal(),showModal:(text)=>showModal(text),getGoalDialog:()=>goalDialog,getDialogVersion:()=>goalDialogVersion,ensureWeek:(key)=>ensureWeek(key)}',context);
+ vm.runInContext('render();globalThis.testApi={settings:()=>switchTab("settings"),openRate:()=>openMountingRate("a"),getData:()=>data,persist:next=>persistCandidate(next),save:()=>save(),onboarding:()=>onboarding(),goalModal:()=>goalModal(),closeModal:()=>closeModal(),showModal:(text)=>showModal(text),getGoalDialog:()=>goalDialog,getDialogVersion:()=>goalDialogVersion,ensureWeek:(key)=>ensureWeek(key)}',context);
  vm.runInContext(scripts.find(m=>m[1].includes('remote-sync-v2'))[2],context);
  return{api:context.testApi,node,storage,writes,rpcs,timers,body,online:()=>window.fioriOnline,getRemote:()=>clone(remote),getReads:()=>reads,
  async ready(){await tick();await tick()},async login(){node('remote-email').value='synthetic@example.invalid';node('remote-password').value='synthetic-password';await node('remote-login-form').onsubmit({preventDefault(){}});await tick()},
@@ -33,6 +33,63 @@ function app({remote=row(),local=null,session=null,pending=null,readError=null,m
  async begin(goal='777'){node('first-goal').value=goal;await node('start-app').onclick()},async flush(){await window.fioriOnline.flush()},async runTimers(){const pending=[...timers.values()];timers.clear();for(const {fn} of pending)await fn();await tick()}};
 }
 const authenticated={user:{id:'synthetic-owner'}};
+
+// Graded finished batches exercise the actual queue/CAS wrapper with synthetic
+// state. A successful commit must contain all four production/payable pairs.
+function sheetSyncRow(){
+ const remote=row();
+ for(const week of Object.values(remote.data.weeks))week.entries=[];
+ remote.data.stockLedger=[];
+ remote.data.settings.mountings[0].rate=2.6;
+ remote.data.financeControl.version=1;
+ for(const color of ['Preto','Caramelo','Rose','Off White'])for(const kind of ['cabedal','solado','palmilha']){
+  remote.data.weeks[WEEK].entries.push({id:kind+'-'+color,date:'2026-10-07',kind,mountingId:'a',modelId:kind==='cabedal'?'m507':'',line:'500',color,qty:72});
+ }
+ return remote;
+}
+function sheetSyncCandidate(state){
+ const Sheets=require('../standard-sheet');
+ return Sheets.createProductionBatch(state,{batchId:'synthetic-cas-review',date:'2026-10-07',kind:'finished',mountingId:'a',modelId:'m507',sheets:1,rows:Sheets.buildGrid(state,{line:'500',sheets:1}).rows},{today:'2026-10-07',now:'2026-10-08T01:00:00Z'});
+}
+for(const mode of ['normal','queue-failure','cache-failure','lost-response','conflict']){
+ test('complete finished sheet batch remains atomic through online '+mode,async()=>{
+  const Assembly=require('../assembly-finance');
+  const a=app({session:authenticated,remote:sheetSyncRow()});await a.ready();
+  const before=JSON.stringify(a.api.getData()),next=sheetSyncCandidate(a.api.getData());
+  if(mode==='queue-failure')a.setWriteErrorKey(PENDING);
+  if(mode==='cache-failure')a.setWriteErrorKey(STORAGE);
+  if(mode==='lost-response')a.setRpc((_name,args)=>{a.setRemote({data:clone(args.p_data),revision:40});throw Error('Lost response after synthetic commit')});
+  if(mode==='conflict'){
+   const newer=sheetSyncRow();newer.revision=40;newer.data.unrelatedRemoteChange=true;a.setRemote(newer);
+  }
+  const accepted=a.api.persist(next);
+  if(mode==='queue-failure'){
+   assert.equal(accepted,false);assert.equal(JSON.stringify(a.api.getData()),before);
+   assert.equal(a.storage.has(PENDING),false);await a.flush();assert.equal(a.rpcs.length,0);return;
+  }
+  assert.equal(accepted,true);
+  assert.equal(Assembly.obligations(JSON.parse(a.storage.get(PENDING)).data).length,4);
+  await a.flush();
+  if(mode==='lost-response'){a.setRpc(null);await a.flush()}
+  if(mode==='conflict'){
+   assert.equal(a.online().conflict(),true);
+   assert.equal(a.getRemote().data.unrelatedRemoteChange,true);
+   assert.equal(Assembly.obligations(a.getRemote().data).length,0);
+   assert.equal(Assembly.obligations(JSON.parse(a.storage.get(PENDING)).data).length,4);
+  }else{
+   assert.equal(Assembly.obligations(a.getRemote().data).length,4);
+   assert.equal(a.online().hasPending(),false);
+  }
+  assert.equal(a.rpcs.length,1);
+  const payload=a.rpcs[0].args;
+  assert.equal(payload.p_expected_revision,39);
+  assert.equal(Assembly.obligations(payload.p_data).length,4);
+  const finished=Object.values(payload.p_data.weeks).flatMap(week=>week.entries).filter(entry=>entry.kind==='finished');
+  assert.equal(finished.length,4);assert.equal(finished.reduce((sum,entry)=>sum+entry.qty,0),72);
+  assert.equal(new Set(finished.map(entry=>entry.sheetBatchId)).size,1);
+ });
+}
+
 test('startup never schedules local onboarding and login CSS hides every modal',()=>{assert.doesNotMatch(scripts[0][2],/setTimeout\(onboarding/);assert.match(html,/\.remote-lock \.wrap,\.remote-lock #modal\{display:none\}/)});
 test('fresh device stays on login, does not open goals or persist defaults',async()=>{const a=app();await a.ready();a.api.onboarding();a.api.goalModal();a.api.save();await a.flush();await a.runTimers();assert.equal(a.node('modal').hidden,true);assert.equal(a.body.classList.contains('remote-lock'),true);assert.equal(a.getReads(),0);assert.equal(a.writes.length,0);assert.equal(a.rpcs.length,0)});
 test('existing online goal wins over stale local goal and onboarding flag',async()=>{const local=row(9999).data,a=app({local,remote:row(1200)});await a.ready();await a.login();assert.equal(a.node('modal').hidden,true);assert.equal(a.api.getData().weeks[WEEK].goal,1200);assert.equal(a.rpcs.length,0);assert.equal(a.online().canEditGoal(),true);assert.equal(a.online().needsGoal(WEEK),false)});
