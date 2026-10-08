@@ -144,12 +144,12 @@ test('fulfillment escapes reference, mounting and color labels',()=>{
  assert.doesNotMatch(rendered,/<img src=x|<svg onload=|<script>alert/);
  assert.match(rendered,/&lt;img src=x/);assert.match(rendered,/&lt;svg onload=/);assert.match(rendered,/&lt;SCRIPT&gt;/);
 });
-test('fulfillment and price parser are loaded before sales bootstrap and included in v28 offline shell',()=>{
+test('fulfillment and price parser are loaded before sales bootstrap and included in v29 offline shell',()=>{
  const sw=fs.readFileSync(path.join(__dirname,'../sw.js'),'utf8');
  for(const filename of ['order-fulfillment.js?v=28','sales-order.js?v=28']){
  assert.ok(html.includes('<script src="'+filename+'"></script>'));assert.ok(sw.includes('"./'+filename+'"'));
  assert.ok(html.indexOf(filename)<html.indexOf('function salesControlBootstrap'));
- }assert.match(sw,/shell-v28/);
+ }assert.match(sw,/shell-v29/);
 });
 
 test('projection-only inventory divergence is explained locally instead of pointing to an absent dashboard warning',()=>{
@@ -165,3 +165,4 @@ test('shared-line capacity uncertainty is visible even when another reference ha
  assert.match(rendered,/Capacidade da linha 500 a conferir/);assert.match(rendered,/Os materiais compartilhados não foram distribuídos/);
  assert.match(rendered,/Pronto na projeção: <strong>72/);
 });
+
