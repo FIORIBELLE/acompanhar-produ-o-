@@ -85,7 +85,7 @@ test('renders three primary blocks with detailed material and finance disclosure
   assert.match(rendered,/Plano por modelo não definido/);assert.match(rendered,/Meta salva: 864 pares/);
   assert.match(rendered,/<details class="mounting-materials"><summary>Ver cores dos materiais e capacidade/);
   assert.match(rendered,/<details class="block dashboard-details" id="week-details"><summary>/);
-  assert.ok(rendered.indexOf('valor a pagar')>rendered.indexOf('id="week-details"'));
+  assert.ok(rendered.indexOf('produção bruta')>rendered.indexOf('id="week-details"'));
   assert.equal(JSON.stringify(api.getData()),before,'render must not save or change operational state');
   node('open-ready-stock').onclick();assert.equal(api.ui.tab,'stock');
 });
@@ -215,5 +215,5 @@ test('new dashboard script uses a cache-busted URL also precached by the service
   assert.equal(scriptUrl,'dashboard-view.js?v=27');
   const sw=fs.readFileSync(path.join(__dirname,'../sw.js'),'utf8');
   assert.ok(sw.includes('"./'+scriptUrl+'"'));
-  assert.match(sw,/shell-v27/);
+  assert.match(sw,/shell-v28/);
 });

@@ -32,7 +32,7 @@ function app(options={}){
     return nodes.get(id);
   };
   let receiptButtons=[];
-  const context=vm.createContext({FioriInventory:Inventory,FioriDashboard:Dashboard,FioriReceipt:Receipt,
+  const context=vm.createContext({FioriInventory:Inventory,FioriDashboard:Dashboard,FioriFulfillment:require("../order-fulfillment"),FioriReceipt:Receipt,
     Date,Intl,console,File,atob,Uint8Array,navigator:options.navigator||{},setTimeout(){},clearTimeout(){},
     fetch(){throw new Error('Unexpected network access')},
     localStorage:{getItem:()=>JSON.stringify(fixture),setItem(){throw Error('Unexpected save')}},
