@@ -76,3 +76,16 @@ Os novos fluxos bloqueiam duplo clique, callback antigo, data sem tarifa, estoqu
 ### Compatibilidade de implantação
 
 A versão r8.2 depende das guardas financeiras correspondentes no banco. A implantação das guardas é uma operação administrativa separada, revisada e autorizada, após backup conferido. Ela não cria produção, gastos, pagamentos, tarifas nem histórico retroativo. Clientes anteriores precisam atualizar para lançar novos produtos prontos com as obrigações correspondentes.
+
+
+## Histórico de tarifas por montagem — r8.3
+
+Ajustes → Montagens exibe a tarifa aplicável hoje em São Paulo e as vigências em histórico somente leitura. “Definir nova vigência” pede a data inicial confirmada e o valor por par, oferece uma prévia e exige confirmação. Hoje aparece como sugestão de data, mas nenhuma tarifa ou data de exemplo é gravada ao abrir, voltar, cancelar ou fornecer valores inválidos. Vigências existentes não podem ser editadas ou apagadas. Montagens inativas continuam visíveis para consulta. Uma vigência futura cadastrada incorretamente também não pode ser corrigida ou removida por esta tela; exige um procedimento específico de revisão, preservando as tarifas já aplicadas.
+
+A gravação usa o motor de montagem e acrescenta somente a nova vigência, com a ativação necessária do controle caso ainda não exista. O aviso explica que essa primeira ativação protege o histórico existente de Produto pronto contra edição e exclusão. A tarifa antiga do cadastro, os snapshots semanais, as produções, os gastos e os acertos anteriores não são recalculados nem completados retroativamente. Tarifas futuras e retroativas são admitidas quando a data é informada explicitamente e ainda não possui vigência.
+
+O formulário bloqueia pendência, conflito, sessão ainda não carregada, dados alterados, callback antigo, duplo clique e troca de tela. Uma falha de gravação reverte o candidato e permite revisão/repetição com o mesmo identificador. A confirmação online reabilita os botões de vigência sem descartar outros campos que estejam sendo editados em Ajustes.
+
+O resumo semanal e o texto de compartilhamento somam cada Produto pronto pela sua tarifa congelada em `assemblyRate`, ou pela tarifa numérica legada em `mountingRate`. Sem tarifa salva no lançamento, os valores projetados ficam explicitamente separados como estimativas; sem referência calculável, os pares ficam sem valor e pedem conferência. Essa consulta nunca gera despesa, dívida, pagamento ou histórico. Valores inválidos e limites de precisão não viram zero silenciosamente.
+
+O cache do aplicativo passou a v31. Os testes usam apenas dados sintéticos, incluindo mudanças de tarifa no meio da semana, fronteiras de vigência, datas futuras, legado, cancelamento, repetição, sincronização e falhas de salvamento. A validação visual em navegador permanece pendente: o Chromium local não pôde iniciar devido à restrição de socket do ambiente.

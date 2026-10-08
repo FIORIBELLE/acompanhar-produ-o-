@@ -212,9 +212,9 @@ test('material color detail escapes untrusted color names',()=>{
 
 test('new dashboard script uses a cache-busted URL also precached by the service worker',()=>{
   const scriptUrl=html.match(/<script src="(dashboard-view\.js\?v=[^"]+)"><\/script>/)?.[1];
-  assert.equal(scriptUrl,'dashboard-view.js?v=27');
+  assert.equal(scriptUrl,'dashboard-view.js?v=31');
   const sw=fs.readFileSync(path.join(__dirname,'../sw.js'),'utf8');
   assert.ok(sw.includes('"./'+scriptUrl+'"'));
-  assert.match(sw,/shell-v30/);
+  assert.match(sw,/shell-v31/);
 });
 

@@ -74,5 +74,99 @@
     const total=items.reduce((sum,item)=>sum+item.goal,0),goal=Number(week.goal)||0;
     return {items,total,mismatch:items.length>0&&goal>0&&total!==goal};
   }
-  return {unitsText,materialSheetSize,materialUnitsText,modelInfo,displayStateForWeek,mountingCards,remainingPlan};
+  // Display projection only: these values never create costs, obligations or historical snapshots.
+  // Unknown history is explicitly estimated. Corrupt saved entry rates remain unpriced.
+  // Returns {mountings, invalidEntries}; monetary fields are integer cents, or null on
+  // aggregate overflow (with an error). Consumers must never display those nulls as zero.
+  function productionValues(state,entries=[],mountings=[]){
+    const object=value=>value!==null&&typeof value==='object'&&!Array.isArray(value);
+    const positive=value=>Number.isSafeInteger(value)&&value>0;
+    const validId=value=>typeof value==='string'&&value.trim()!==''&&value===value.trim();
+    const validDate=value=>{
+      if(typeof value!=='string'||!/^\d{4}-\d{2}-\d{2}$/.test(value)||value.slice(0,4)==='0000')return false;
+      const date=new Date(value+'T12:00:00Z');
+      return Number.isFinite(date.getTime())&&date.toISOString().slice(0,10)===value;
+    };
+    const moneyCents=(value,allowZero=false)=>{
+      // Do not coerce null, strings or sub-cent values into confirmed money.
+      if(typeof value!=='number'||!Number.isFinite(value)||value<0||(!allowZero&&value===0))return null;
+      const raw=String(value);
+      if(!/^\d+(?:\.\d{1,2})?$/.test(raw))return null;
+      const [whole,fraction='']=raw.split('.'),cents=Number(whole+fraction.padEnd(2,'0'));
+      return positive(cents)||(allowZero&&cents===0)?cents:null;
+    };
+    const settings=object(state?.settings)?state.settings:{},current=Array.isArray(settings.mountings)?settings.mountings:[];
+    const supplied=Array.isArray(mountings)?mountings:[],rows=new Map(),invalidEntries=[];
+    function ensure(id,entry){
+      if(!rows.has(id)){
+        const snapshot=supplied.find(m=>object(m)&&m.id===id),mounting=current.find(m=>object(m)&&m.id===id);
+        rows.set(id,{id,name:snapshot?.name||mounting?.name||entry?.mountingName||id||'Montagem não identificada',
+          totalPairs:0,knownPairs:0,knownCents:0,estimatedPairs:0,estimatedCents:0,unpricedPairs:0,invalidEntries:[],rates:[]});
+      }
+      return rows.get(id);
+    }
+    for(const mounting of supplied)if(object(mounting)&&validId(mounting.id))ensure(mounting.id);
+    function invalid(row,entry,index,reason,field){
+      const issue={entryId:typeof entry?.id==='string'?entry.id:null,entryIndex:index,mountingId:row?.id??null,reason};
+      if(field)issue.field=field;
+      invalidEntries.push(issue);if(row)row.invalidEntries.push(issue);
+    }
+    function add(target,field,value,row,entry,index){
+      if(target[field]===null)return;
+      const total=target[field]+value;
+      if(Number.isSafeInteger(total))target[field]=total;
+      else{target[field]=null;invalid(row,entry,index,'aggregate_overflow',field)}
+    }
+    function rateFor(entry,id){
+      if(Object.hasOwn(entry,'assemblyRate')){
+        if(!object(entry.assemblyRate)||!positive(entry.assemblyRate.rateCents))return {error:'invalid_frozen_rate'};
+        return {rateCents:entry.assemblyRate.rateCents,status:'known',source:'frozen'};
+      }
+      if(Object.hasOwn(entry,'mountingRate')){
+        const rateCents=moneyCents(entry.mountingRate,true);
+        return rateCents===null?{error:'invalid_legacy_rate'}:{rateCents,status:'known',source:'legacy_entry'};
+      }
+      if(!validDate(entry.date))return {error:'invalid_production_date'};
+      if(settings.mountingRateHistory!==undefined&&!Array.isArray(settings.mountingRateHistory))return {error:'invalid_rate_history'};
+      const history=(settings.mountingRateHistory||[]).filter(rate=>object(rate)&&rate.mountingId===id);
+      if(history.some(rate=>!validDate(rate.effectiveFrom)))return {error:'invalid_rate_history'};
+      const eligible=history.filter(rate=>rate.effectiveFrom<=entry.date).sort((a,b)=>b.effectiveFrom.localeCompare(a.effectiveFrom));
+      if(eligible.length){
+        const rate=eligible[0];
+        if(!positive(rate.rateCents))return {error:'invalid_history_rate'};
+        if(eligible[1]?.effectiveFrom===rate.effectiveFrom)return {error:'ambiguous_rate_history'};
+        return {rateCents:rate.rateCents,status:'estimated',source:'rate_history',effectiveFrom:rate.effectiveFrom};
+      }
+      const snapshot=supplied.find(m=>object(m)&&m.id===id),mounting=current.find(m=>object(m)&&m.id===id);
+      const snapshotCents=moneyCents(snapshot?.rate),currentCents=moneyCents(mounting?.rate);
+      if(snapshotCents!==null)return {rateCents:snapshotCents,status:'estimated',source:'mounting_snapshot'};
+      if(currentCents!==null)return {rateCents:currentCents,status:'estimated',source:'current_mounting'};
+      return {error:'missing_rate'};
+    }
+    if(!Array.isArray(entries)){
+      invalid(null,null,null,'invalid_entries');return {mountings:[...rows.values()],invalidEntries};
+    }
+    entries.forEach((entry,index)=>{
+      if(!object(entry)){invalid(null,entry,index,'invalid_entry');return}
+      if(entry.kind!=='finished')return;
+      const id=validId(entry.mountingId)?entry.mountingId:null,row=ensure(id,entry);
+      if(!positive(entry.qty)){invalid(row,entry,index,'invalid_quantity');return}
+      add(row,'totalPairs',entry.qty,row,entry,index);
+      const rate=id===null?{error:'invalid_mounting_id'}:rateFor(entry,id);
+      const cents=rate.error?null:entry.qty*rate.rateCents;
+      const validAmount=positive(cents)||(cents===0&&rate.source==='legacy_entry'&&rate.rateCents===0);
+      if(rate.error||!validAmount){
+        add(row,'unpricedPairs',entry.qty,row,entry,index);
+        invalid(row,entry,index,rate.error||'unsafe_entry_amount');return;
+      }
+      const prefix=rate.status==='known'?'known':'estimated';
+      add(row,prefix+'Pairs',entry.qty,row,entry,index);add(row,prefix+'Cents',cents,row,entry,index);
+      let breakdown=row.rates.find(item=>item.rateCents===rate.rateCents&&item.source===rate.source&&item.effectiveFrom===rate.effectiveFrom);
+      if(!breakdown){breakdown={...rate,pairs:0,cents:0};row.rates.push(breakdown)}
+      add(breakdown,'pairs',entry.qty,row,entry,index);add(breakdown,'cents',cents,row,entry,index);
+    });
+    return {mountings:[...rows.values()],invalidEntries};
+  }
+  return {unitsText,materialSheetSize,materialUnitsText,modelInfo,displayStateForWeek,mountingCards,remainingPlan,productionValues};
 });
+
