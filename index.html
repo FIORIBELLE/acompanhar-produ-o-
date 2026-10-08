@@ -103,6 +103,7 @@ footer{color:var(--soft);font-size:.78rem;text-align:center;padding:8px 0 24px}
 @media(prefers-reduced-motion:reduce){.meter-fill,.bar span{transition:none}}
 @media(display-mode:standalone){.install-help{display:none}}
 
+.mounting-item{grid-template-columns:minmax(0,1fr) auto}.mounting-rate-card{padding:12px 0;border-top:1px solid var(--line)}.mounting-rate-card:first-child{border-top:0}.mounting-current-rate{margin:8px 0}.mounting-current-rate .sub{margin-top:3px}.mounting-rate-history{margin-top:10px}.mounting-rate-history>summary{cursor:pointer;min-height:44px;align-content:center;font-size:.9rem}.mounting-rate-history>summary:focus-visible{outline:3px solid var(--live);outline-offset:2px}.mounting-rate-history ol{padding-left:22px;font-size:.85rem}.mounting-rate-history li{padding:5px 0}.mounting-rate-card .sub{overflow-wrap:anywhere}button:disabled{cursor:not-allowed;opacity:.6}
 /* STOCK_PANEL_V1 */
 .stock-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px}
 .stock-sector-card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:13px}
@@ -214,7 +215,7 @@ footer{color:var(--soft);font-size:.78rem;text-align:center;padding:8px 0 24px}
     <button class="btn" id="edit-goal" type="button">Editar meta</button>
     <button class="btn primary" id="share" type="button">Compartilhar resumo</button>
   </div>
-  <footer id="app-footer">Base online Fiori Belle · sincronização automática · v2026.10.08-r8.2</footer>
+  <footer id="app-footer">Base online Fiori Belle · sincronização automática · v2026.10.08-r8.3</footer>
 </div>
 
 <div class="toast" id="toast" hidden role="status" aria-live="polite"></div>
@@ -224,7 +225,7 @@ footer{color:var(--soft);font-size:.78rem;text-align:center;padding:8px 0 24px}
 <input id="backup-file" type="file" accept="application/json,.json" hidden>
 
 <script src="inventory-guard.js"></script>
-<script src="dashboard-view.js?v=27"></script>
+<script src="dashboard-view.js?v=31"></script>
 <script src="sales-receipt.js"></script>
 <script src="sales-order.js?v=28"></script>
 <script src="order-fulfillment.js?v=28"></script>
@@ -257,6 +258,7 @@ const DEFAULTS={
 let data=loadData();
 let ui={tab:"week",viewWeek:null,editingEntry:null};
 let toastTimer=null,goalDialog=null,goalDialogVersion=0;
+let mountingRateAttempt=null,mountingSettingsGeneration=0;
 
 function clone(v){return JSON.parse(JSON.stringify(v))}
 function loadData(source){
@@ -425,7 +427,8 @@ function weekSummary(key){
   const work=workdayStats(key,key<currentWeekKey());
   const avg=work.elapsed?t.done/work.elapsed:0;
   const projection=Math.round(t.done+avg*work.remaining);
-  return{...t,goal,rate:goal?100*t.done/goal:0,gargalo,work,avg,projection,stock,stockByMounting,componentTotals,possible};
+  const mountingValues=FioriDashboard.productionValues(data,w.entries.filter(e=>entryInWeek(e,key)&&(key!==currentWeekKey()||e.date<=spDate())),mountingsForWeek(key));
+  return{...t,goal,rate:goal?100*t.done/goal:0,gargalo,work,avg,projection,stock,stockByMounting,componentTotals,possible,mountingValues};
 }
 function barWidth(value,goal){return goal?Math.max(0,Math.min(100,100*value/goal)):0}
 function fichasText(pairs){
@@ -436,8 +439,9 @@ function fichasText(pairs){
 function showToast(message){
   const el=document.getElementById("toast");el.textContent=message;el.hidden=false;clearTimeout(toastTimer);toastTimer=setTimeout(()=>el.hidden=true,2600);
 }
-function showModal(html,kind=null){goalDialog=kind;goalDialogVersion++;document.getElementById("modal-sheet").innerHTML=html;document.getElementById("modal").hidden=false}
-function closeModal(){goalDialog=null;goalDialogVersion++;document.getElementById("modal").hidden=true;document.getElementById("modal-sheet").innerHTML=""}
+function showModal(html,kind=null){if(kind!=="mounting-rate")mountingRateAttempt=null;goalDialog=kind;goalDialogVersion++;document.getElementById("modal-sheet").innerHTML=html;document.getElementById("modal").hidden=false}
+function closeModal(){const returnFocus=mountingRateAttempt?.returnFocus;mountingRateAttempt=null;goalDialog=null;goalDialogVersion++;document.getElementById("modal").hidden=true;document.getElementById("modal-sheet").innerHTML="";if(returnFocus?.isConnected)returnFocus.focus?.()}
+function invalidateMountingRateDialog(){if(mountingRateAttempt)closeModal()}
 function confirmAction({title,message,confirmText="Confirmar",danger=false,onConfirm}){
   showModal(`<h2 id="modal-title">${esc(title)}</h2><p>${esc(message)}</p><div class="button-row"><button class="btn" data-modal-close>Cancelar</button><button class="btn ${danger?"danger":"primary"}" id="modal-confirm">${esc(confirmText)}</button></div>`);
   const dialogVersion=goalDialogVersion;let used=false;
@@ -531,13 +535,21 @@ function remainingWeekMarkup(w,s,readOnly,key,displayState=data){
     ${plan.mismatch?`<div class="notice dashboard-alert">As metas por modelo somam ${fmt(plan.total)} pares, mas a meta semanal salva é ${fmt(s.goal)}. Revise o plano.</div>`:""}
   </div>`;
 }
+function mountingProductionText(row){
+  const parts=[];
+  if(row.knownPairs>0||row.knownCents===null)parts.push(row.knownCents===null?"Bruto pelas tarifas salvas: valor a conferir":`Bruto pelas tarifas salvas: ${money(row.knownCents/100)} (${fmt(row.knownPairs)} pares)`);
+  if(row.estimatedPairs>0||row.estimatedCents===null)parts.push(row.estimatedCents===null?"Estimativa: valor a conferir":`Estimativa: ${money(row.estimatedCents/100)} (${fmt(row.estimatedPairs)} pares sem tarifa congelada)`);
+  if(row.unpricedPairs>0)parts.push(`${fmt(row.unpricedPairs)} pares sem valor calculável`);
+  if(row.invalidEntries.length)parts.push("Há registros para conferir");
+  return parts.join(" · ")||"Sem produção nesta semana.";
+}
 function weekDetailsMarkup(w,s,models,mountings,displayState=data){
   const goal=s.goal,remaining=Math.max(0,goal-s.done),perDay=s.work.remaining?remaining/s.work.remaining:0,maxComponent=Math.max(1,...Object.values(s.componentTotals));
   return `<details class="block dashboard-details" id="week-details"><summary>Ver detalhes da semana</summary>
     <div class="block"><h2>Produção e meta</h2>${goal?`<div class="meter"><div class="meter-top"><div class="meter-num">${fmt(s.done)}<small> / ${fmt(goal)}</small></div><div class="meter-cap">pares produzidos<br>${pct(s.rate)}</div></div><div class="meter-track"><div class="meter-fill" style="width:${barWidth(s.done,goal)}%"></div></div></div>`:'<p class="sub">Meta semanal não definida.</p>'}<div class="summary-grid"><div class="summary-stat"><strong>${fmt(s.possible)} pares</strong><span>capacidade atual das montagens</span></div><div class="summary-stat"><strong>${fmt(s.projection)} pares</strong><span>projeção semanal no ritmo atual</span></div></div></div>
     <div class="block"><h2>Componentes disponíveis</h2><p class="sub">Saldos das montagens. Cabedais por modelo; palmilhas e solados compartilhados por linha.</p>${COMPONENTS.map(c=>{const value=s.componentTotals[c.id]||0;return `<div class="row"><div class="row-top"><span class="name">${esc(c.name)}</span><span class="value">${fmt(value)} pares</span></div><div class="bar secondary"><span style="width:${100*value/maxComponent}%"></span></div></div>`}).join("")}</div>
     <div class="block"><h2>Ritmo da semana</h2><div class="row"><div class="row-top"><span class="name">Média diária</span><span class="value">${fmt(s.avg)} pares/dia</span></div><div class="votes">${fmt(s.done)} pares em ${s.work.elapsed} ${s.work.elapsed===1?"dia trabalhado":"dias trabalhados"}</div></div><div class="row"><div class="row-top"><span class="name">Dias de trabalho restantes</span><span class="value">${s.work.remaining}</span></div><div class="votes">Projeção de ${fmt(s.projection)} pares no ritmo atual.</div></div>${goal?`<div class="row"><div class="row-top"><span class="name">${s.work.remaining?"Quanto falta por dia":"Quanto faltou"}</span><span class="value">${fmt(s.work.remaining?perDay:remaining)} ${s.work.remaining?"pares/dia":"pares"}</span></div></div>`:""}</div>
-    <div class="block"><h2>Produção por montagem</h2><p class="sub">Pares prontos produzidos e valor bruto da produção. Não informa saldo a pagar.</p>${mountings.map(mt=>{const value=s.byMounting[mt.id]||0;return `<div class="row"><div class="row-top"><span class="name">${esc(mt.name)}</span><span class="value">${fmt(value)} prontos</span></div><div class="votes">${money(mt.rate)} por par · produção bruta ${money(value*(Number(mt.rate)||0))}</div></div>`}).join("")||'<div class="empty">Cadastre uma montagem em Ajustes.</div>'}</div>
+    <div class="block"><h2>Produção por montagem</h2><p class="sub">Valor da produção bruta somado pelas tarifas salvas em cada lançamento. Valores sem tarifa congelada são estimativas pela referência disponível. Não informa saldo a pagar nem gera custo ou dívida.</p>${s.mountingValues.mountings.map(row=>`<div class="row"><div class="row-top"><span class="name">${esc(row.name)}</span><span class="value">${row.totalPairs===null?'Quantidade a conferir':fmt(row.totalPairs)+' prontos'}</span></div><div class="votes">${esc(mountingProductionText(row))}</div></div>`).join("")||'<div class="empty">Cadastre uma montagem em Ajustes.</div>'}</div>
     <div class="block"><h2>Produção por modelo</h2><p class="sub">Pares prontos produzidos nesta semana.</p>${models.map(m=>{const value=s.byModel[m.id]||0,mg=Number(w.modelGoals[m.id])||0;return `<div class="row dashboard-model"><div class="row-top"><div>${dashboardModelName(FioriDashboard.modelInfo(displayState,m.id))}</div><span class="value">${fmt(value)} pares</span></div><div class="votes">${FioriDashboard.unitsText(value,data.settings)}${mg?` · meta ${fmt(mg)} · ${pct(100*value/mg)}`:""}</div>${mg?`<div class="bar secondary"><span style="width:${barWidth(value,mg)}%"></span></div>`:""}</div>`}).join("")||'<div class="empty">Cadastre um modelo em Ajustes.</div>'}</div>
   </details>`;
 }
@@ -679,22 +691,41 @@ function modelSettingsItem(item,index,total){
   const complete=item.cabedalCost!==null&&item.cabedalCost!==undefined&&item.cabedalCost!==""&&item.totalCost!==null&&item.totalCost!==undefined&&item.totalCost!==""&&Number.isFinite(Number(item.cabedalCost))&&Number.isFinite(Number(item.totalCost));
   return '<div class="setting-item"><div style="min-width:0;flex:1"><strong>'+esc(ref?('Ref. '+ref+' · '+item.name):item.name)+'</strong><div class="sub" style="margin-top:4px">Linha '+esc(line)+' · '+(complete?('Cabedal '+money(item.cabedalCost)+' · Total '+money(item.totalCost)):'Custos vindos do catálogo oficial ou pendentes')+'</div></div><div class="mini-actions"><button data-edit-model="'+item.id+'" aria-label="Editar ficha">Ficha</button><button data-move="up" data-id="'+item.id+'" data-type="models" '+(index===0?'disabled':'')+'>↑</button><button data-move="down" data-id="'+item.id+'" data-type="models" '+(index===total-1?'disabled':'')+'>↓</button><button class="remove" data-remove="'+item.id+'" data-type="models">×</button></div></div>';
 }
-function mountingSettingsItem(item,index,total){
-  const rate=Number(item.rate||0).toLocaleString("pt-BR",{minimumFractionDigits:2,maximumFractionDigits:2});
-  return `<div class="setting-item mounting-item"><input value="${esc(item.name)}" data-name-id="${item.id}" data-type="mountings" aria-label="Nome da montagem"><div class="rate-field"><input value="${rate}" inputmode="decimal" data-rate-id="${item.id}" aria-label="Valor por par"></div><div class="mini-actions"><button data-move="up" data-id="${item.id}" data-type="mountings" ${index===0?"disabled":""} aria-label="Mover para cima">↑</button><button data-move="down" data-id="${item.id}" data-type="mountings" ${index===total-1?"disabled":""} aria-label="Mover para baixo">↓</button><button class="remove" data-remove="${item.id}" data-type="mountings" aria-label="Remover">×</button></div></div>`;
+function mountingRateHistoryMarkup(item){
+  const today=spDate(),raw=data.settings.mountingRateHistory;
+  if(raw!==undefined&&!Array.isArray(raw))return '<p class="notice">Histórico de tarifas inválido. Solicite conferência antes de alterar.</p>';
+  const rows=(raw||[]).filter(r=>r?.mountingId===item.id).slice().sort((a,b)=>String(a.effectiveFrom).localeCompare(String(b.effectiveFrom)));
+  return `<details class="mounting-rate-history"><summary>Histórico de tarifas (${rows.length})</summary>${rows.length?`<ol>${rows.map((r,i)=>{
+    const valid=typeof FioriAssembly!=="undefined"&&FioriAssembly.validDate(r.effectiveFrom)&&Number.isSafeInteger(r.rateCents)&&r.rateCents>0;
+    if(!valid)return '<li>Registro inválido. Solicite conferência.</li>';
+    const next=rows[i+1],until=next&&FioriAssembly.validDate(next.effectiveFrom)?` até ${fmtDate(addDays(next.effectiveFrom,-1))}`:' em diante';
+    return `<li><strong>${money(r.rateCents/100)} por par</strong><br>De ${fmtDate(r.effectiveFrom)}${until}${r.effectiveFrom>today?' · futura':''}</li>`;
+  }).join("")}</ol>`:'<p class="sub">Nenhuma vigência cadastrada. O valor de referência antigo não comprova a tarifa de datas passadas.</p>'}<p class="sub">Somente leitura. Vigências existentes não podem ser editadas ou apagadas.</p></details>`;
+}
+function mountingSettingsItem(item,index,total,inactive=false){
+  const today=spDate();let current;
+  try{const rate=FioriAssembly.resolveRate(data,item.id,today,today);current=`<strong>${money(rate.rateCents/100)} por par hoje</strong><div class="sub">${rate.source==="history"?`Vigência desde ${fmtDate(rate.effectiveFrom)}`:'Referência legada, válida apenas para produção de hoje; sem vigência histórica.'}</div>`}
+  catch(error){current=`<strong>Sem tarifa aplicável hoje</strong><div class="sub">${esc(typeof FioriAssembly==="undefined"?'Recarregue o app para carregar as tarifas.':error.message)}</div>`}
+  return `<article class="mounting-rate-card"><div class="setting-item mounting-item">${inactive?`<strong>${esc(item.name)} · inativa</strong>`:`<input value="${esc(item.name)}" data-name-id="${esc(item.id)}" data-type="mountings" aria-label="Nome da montagem"><div class="mini-actions"><button data-move="up" data-id="${esc(item.id)}" data-type="mountings" ${index===0?"disabled":""} aria-label="Mover para cima">↑</button><button data-move="down" data-id="${esc(item.id)}" data-type="mountings" ${index===total-1?"disabled":""} aria-label="Mover para baixo">↓</button><button class="remove" data-remove="${esc(item.id)}" data-type="mountings" aria-label="Remover">×</button></div>`}</div><div class="mounting-current-rate">${current}</div>${inactive?'':`<button class="btn small" type="button" data-define-rate="${esc(item.id)}" ${assemblyBusy()||typeof FioriAssembly==="undefined"?'disabled':''}>Definir nova vigência</button>`}${mountingRateHistoryMarkup(item)}</article>`;
 }
 function backupStatus(){
   if(!data.lastBackup)return{warn:true,text:"Nenhum backup feito ainda."};
   const days=Math.floor((Date.now()-new Date(data.lastBackup).getTime())/86400000);
   return{warn:days>7,text:`Último backup: ${new Intl.DateTimeFormat("pt-BR",{timeZone:TZ,dateStyle:"short",timeStyle:"short"}).format(new Date(data.lastBackup))}${days>7?" · faça um novo backup":""}`};
 }
+function refreshMountingRateAvailability(){
+  if(ui.tab!=="settings")return;
+  const busy=assemblyBusy();document.querySelectorAll("[data-define-rate]").forEach(button=>button.disabled=busy||typeof FioriAssembly==="undefined");
+  const notice=document.getElementById("mounting-rate-online-warning");if(notice)notice.hidden=!busy;
+}
 function renderSettings(){
+  invalidateMountingRateDialog();const settingsGeneration=++mountingSettingsGeneration;
   const models=activeModels(),mountings=activeMountings(),bs=backupStatus(),days=[{n:1,l:"Seg"},{n:2,l:"Ter"},{n:3,l:"Qua"},{n:4,l:"Qui"},{n:5,l:"Sex"},{n:6,l:"Sáb"},{n:0,l:"Dom"}];
   document.getElementById("tab-settings").innerHTML=`
     <div class="block"><h2>Padrões da fábrica</h2><p class="sub">Esses valores alimentam os botões rápidos e a conversão em fichas.</p><div class="form-grid"><div class="field"><label for="pairs-sheet">Pares por ficha</label><input id="pairs-sheet" inputmode="numeric" value="${data.settings.pairsPerSheet}"></div><div class="field"><label for="pairs-kit">Pares por kit</label><input id="pairs-kit" inputmode="numeric" value="${data.settings.pairsPerKit}"></div></div><button class="btn primary full" id="save-patterns">Salvar padrões</button></div>
     <div class="block"><h2>Componentes controlados</h2><p class="sub">Cada par pronto baixa um cabedal do modelo e uma palmilha e um solado da linha correspondente, sempre na mesma montagem.</p><div class="summary-grid">${COMPONENTS.map(c=>`<div class="summary-stat"><strong>${esc(c.name)}</strong><span>controle em pares</span></div>`).join("")}</div></div>
     <div class="block"><h2>Custos por linha</h2><p class="sub">Palmilha e solado são compartilhados por linha. Estes valores são os custos oficiais usados no estoque.</p><div class="settings-list">${Object.entries(data.settings.lineCosts||{}).sort(([a],[b])=>a.localeCompare(b,"pt-BR",{numeric:true})).map(([line,c])=>`<div class="row"><div class="row-top"><strong>Linha ${esc(line)}</strong><span>${c.usesPalmilha===false?"Sem palmilha":""}</span></div><div class="form-grid"><div class="field"><label>Solado / par</label><input inputmode="decimal" data-line-cost="${esc(line)}" data-line-key="solado" value="${Number(c.solado||0).toLocaleString("pt-BR",{minimumFractionDigits:2,maximumFractionDigits:2})}"></div><div class="field"><label>Palmilha / par</label><input inputmode="decimal" data-line-cost="${esc(line)}" data-line-key="palmilha" ${c.usesPalmilha===false?"disabled":""} value="${Number(c.palmilha||0).toLocaleString("pt-BR",{minimumFractionDigits:2,maximumFractionDigits:2})}"></div></div></div>`).join("")}</div><button class="btn primary full" id="save-line-costs">Salvar custos das linhas</button></div>
-    <div class="block"><h2>Montagens</h2><p class="sub">Defina as equipes e o valor pago por par pronto. Os valores das semanas anteriores ficam preservados.</p><div class="settings-list">${mountings.map((x,i)=>mountingSettingsItem(x,i,mountings.length)).join("")}</div><button class="btn full" id="add-mounting">Adicionar montagem</button></div>
+    <div class="block"><h2>Montagens</h2><p class="sub">A tarifa vale pela data da produção. Cadastre cada mudança com a data inicial confirmada; valores já congelados permanecem preservados.</p><div class="settings-list">${mountings.map((x,i)=>mountingSettingsItem(x,i,mountings.length)).join("")}</div><p class="notice" id="mounting-rate-online-warning" ${assemblyBusy()?"":"hidden"}>Aguarde a base online confirmar os dados ou resolva o conflito para definir uma vigência.</p>${data.settings.mountings.some(x=>x.active===false)?`<details class="mounting-rate-history"><summary>Montagens inativas · somente leitura</summary>${data.settings.mountings.filter(x=>x.active===false).map(x=>mountingSettingsItem(x,0,0,true)).join("")}</details>`:""}<button class="btn full" id="add-mounting">Adicionar montagem</button></div>
     <div class="block"><h2>Modelos e fichas de custo</h2><p class="sub">No modelo novo, informe referência, linha, custo do cabedal e custo total. Solado e palmilha são herdados da linha.</p><div class="settings-list">${models.map((x,i)=>modelSettingsItem(x,i,models.length)).join("")}</div><button class="btn full" data-add-item="models">Adicionar modelo</button></div>
     <div class="block"><h2>Dias de trabalho</h2><p class="sub">A semana sempre começa na segunda-feira.</p><div class="days">${days.map(d=>`<label class="day-check"><input type="checkbox" value="${d.n}" ${data.settings.workDays.includes(d.n)?"checked":""}><span>${d.l}</span></label>`).join("")}</div><button class="btn primary full" id="save-days">Salvar dias</button></div>
     <div class="block"><h2>Backup</h2><p class="sub">O backup protege os dados se o iPhone for trocado, restaurado ou perder os dados do Safari.</p><div class="button-row"><button class="btn" id="export-backup">Exportar backup</button><button class="btn" id="import-backup">Importar backup</button></div><div class="backup-status ${bs.warn?"warn":""}">${esc(bs.text)}</div></div>
@@ -703,7 +734,7 @@ function renderSettings(){
   document.getElementById("save-line-costs").onclick=saveLineCosts;
   document.getElementById("save-days").onclick=saveDays;
   document.querySelectorAll("[data-name-id]").forEach(i=>i.onchange=()=>renameItem(i.dataset.type,i.dataset.nameId,i.value));
-  document.querySelectorAll("[data-rate-id]").forEach(i=>i.onchange=()=>saveMountingRate(i.dataset.rateId,i.value));
+  document.querySelectorAll("[data-define-rate]").forEach(b=>b.onclick=()=>{if(settingsGeneration===mountingSettingsGeneration&&ui.tab==="settings")openMountingRate(b.dataset.defineRate,b)});
   document.querySelectorAll("[data-edit-model]").forEach(b=>b.onclick=()=>editModel(b.dataset.editModel));
   document.querySelectorAll("[data-move]").forEach(b=>b.onclick=()=>moveItem(b.dataset.type,b.dataset.id,b.dataset.move));
   document.querySelectorAll("[data-remove]").forEach(b=>b.onclick=()=>removeItem(b.dataset.type,b.dataset.remove));
@@ -734,9 +765,62 @@ function saveDays(){
   data.settings.workDays=checked;save();render();showToast("Dias de trabalho atualizados.");
 }
 function parseMoney(value){const raw=String(value).trim();if(!raw)return NaN;return Number(raw.includes(",")?raw.replace(/\./g,"").replace(",","."):raw)}
-function saveMountingRate(id,value){
-  const rate=parseMoney(value);if(!Number.isFinite(rate)||rate<0){renderSettings();showToast("Digite um valor válido por par.");return}
-  const item=data.settings.mountings.find(x=>x.id===id);if(item){item.rate=Math.round(rate*100)/100;syncCurrentSnapshots();save();render();showToast("Valor por par atualizado.")}
+function saveMountingRate(id){openMountingRate(id)}
+function openMountingRate(id,returnFocus=null){
+  if(ui.tab!=="settings")return;
+  if(assemblyBusy()){showToast("Aguarde a confirmação da base online ou resolva o conflito antes de definir a vigência.");return}
+  if(typeof FioriAssembly==="undefined"){showToast("Recarregue o app para carregar as tarifas.");return}
+  const item=data.settings.mountings.find(x=>x.id===id&&x.active!==false);if(!item)return;
+  const attempt={id:uid("tarifa"),mountingId:id,name:item.name,createdAt:new Date().toISOString(),date:spDate(),value:"",fingerprint:JSON.stringify(data),generation:mountingSettingsGeneration,returnFocus,phase:"form"};
+  mountingRateForm(attempt);
+}
+function mountingRateIsCurrent(attempt,dialogVersion){
+  return mountingRateAttempt===attempt&&ui.tab==="settings"&&attempt.generation===mountingSettingsGeneration&&dialogVersion===goalDialogVersion&&!document.getElementById("modal").hidden;
+}
+function mountingRateInput(attempt,date,value){
+  const raw=String(value).trim();
+  if(!/^\d+(?:[,.]\d{1,2})?$/.test(raw))throw new Error("Digite uma tarifa maior que zero, com no máximo duas casas decimais, sem separador de milhares.");
+  const rateCents=FioriAssembly.moneyCents(raw.replace(",","."));
+  if(!Number.isSafeInteger(rateCents)||rateCents<=0)throw new Error("Digite uma tarifa maior que zero, em centavos exatos.");
+  const input={id:attempt.id,mountingId:attempt.mountingId,effectiveFrom:date,rateCents,createdAt:attempt.createdAt,source:"manual"};
+  // Validate only a clone. Opening, previewing and cancelling never persist it.
+  FioriAssembly.addRate(data,input);return input;
+}
+function mountingRatePreview(input){
+  const next=(data.settings.mountingRateHistory||[]).filter(x=>x.mountingId===input.mountingId&&x.effectiveFrom>input.effectiveFrom).sort((a,b)=>a.effectiveFrom.localeCompare(b.effectiveFrom))[0];
+  return `${money(input.rateCents/100)} por par para novas produções com data de ${fmtDate(input.effectiveFrom)}${next?` até ${fmtDate(addDays(next.effectiveFrom,-1))}`:' em diante'}.${input.effectiveFrom>spDate()?' Vigência futura.':''} Produções já lançadas e acertos não serão recalculados.`;
+}
+function mountingRateForm(attempt,errorMessage=""){
+  attempt.phase="form";mountingRateAttempt=attempt;
+  showModal(`<h2 id="modal-title">Nova vigência · ${esc(attempt.name)}</h2><p class="sub">Informe a data inicial combinada e o valor por par. Abrir esta tela não salva nenhuma alteração.</p><form id="mounting-rate-form" novalidate><div class="field"><label for="mounting-rate-date">Data inicial da vigência</label><input id="mounting-rate-date" type="date" required value="${esc(attempt.date)}"></div><div class="field"><label for="mounting-rate-value">Tarifa por par (R$)</label><input id="mounting-rate-value" inputmode="decimal" autocomplete="off" required value="${esc(attempt.value)}" placeholder="0,00" aria-describedby="mounting-rate-preview"></div><div class="calc" id="mounting-rate-preview" role="status" aria-live="polite"></div><p id="mounting-rate-error" class="notice" role="alert" ${errorMessage?'':'hidden'}>${esc(errorMessage)}</p><div class="button-row"><button class="btn" type="button" data-modal-close>Cancelar</button><button class="btn primary" type="submit">Revisar vigência</button></div></form>`,"mounting-rate");
+  const version=goalDialogVersion,form=document.getElementById("mounting-rate-form"),date=document.getElementById("mounting-rate-date"),value=document.getElementById("mounting-rate-value"),preview=document.getElementById("mounting-rate-preview");
+  date.value=attempt.date;value.value=attempt.value;document.getElementById("mounting-rate-error").textContent=errorMessage;
+  function update(){if(!mountingRateIsCurrent(attempt,version))return;attempt.date=date.value;attempt.value=value.value;try{preview.textContent=mountingRatePreview(mountingRateInput(attempt,date.value,value.value))}catch(error){preview.textContent=error.message}}
+  date.onchange=update;value.oninput=update;update();
+  form.onsubmit=e=>{
+    e.preventDefault();if(!mountingRateIsCurrent(attempt,version)||attempt.phase!=="form")return;
+    if(assemblyBusy()||JSON.stringify(data)!==attempt.fingerprint){closeModal();showToast("Os dados mudaram. Aguarde a base online e abra a vigência novamente.");return}
+    let input;try{input=mountingRateInput(attempt,date.value,value.value)}catch(error){const alert=document.getElementById("mounting-rate-error");alert.textContent=error.message;alert.hidden=false;return}
+    attempt.date=date.value;attempt.value=value.value;mountingRateConfirm(attempt,input);
+  };
+  date.focus?.();
+}
+function mountingRateConfirm(attempt,input){
+  attempt.phase="confirm";
+  const activation=data.assemblyControl===undefined?' Ao iniciar o controle de tarifas, o histórico existente de Produto pronto fica protegido contra edição e exclusão.':'';
+  showModal(`<h2 id="modal-title">Confirmar nova vigência?</h2><p><strong>${esc(attempt.name)}</strong></p><p>${esc(mountingRatePreview(input))}</p><p class="sub">A vigência não poderá ser editada ou apagada.${esc(activation)}</p><div class="button-row"><button class="btn" type="button" data-modal-close>Cancelar</button><button class="btn" type="button" id="mounting-rate-back">Voltar</button><button class="btn primary" type="button" id="mounting-rate-confirm">Confirmar vigência</button></div>`,"mounting-rate");
+  const version=goalDialogVersion,confirm=document.getElementById("mounting-rate-confirm");let used=false;
+  document.getElementById("mounting-rate-back").onclick=()=>{if(!used&&mountingRateIsCurrent(attempt,version))mountingRateForm(attempt)};
+  confirm.onclick=()=>{
+    if(used||!mountingRateIsCurrent(attempt,version)||attempt.phase!=="confirm")return;used=true;confirm.disabled=true;
+    if(assemblyBusy()||JSON.stringify(data)!==attempt.fingerprint){closeModal();showToast("Os dados mudaram. Aguarde a base online e abra a vigência novamente.");return}
+    try{
+      const next=FioriAssembly.addRate(data,input);
+      if(!persistCandidate(next)){mountingRateForm(attempt,"A vigência não foi salva. Confira o espaço e a conexão; revise os dados para tentar novamente.");return}
+      closeModal();render();showToast(window.fioriOnline?.onlineMode?"Vigência salva neste aparelho. Aguardando confirmação online.":"Vigência salva neste aparelho.");
+    }catch(error){mountingRateForm(attempt,error.message)}
+  };
+  document.getElementById("mounting-rate-back").focus?.();
 }
 function renameItem(type,id,value){
   value=value.trim();if(!value){renderSettings();showToast("O nome não pode ficar vazio.");return}
@@ -803,7 +887,7 @@ function addItem(type){
   document.getElementById("confirm-add").onclick=()=>{const name=document.getElementById("new-item").value.trim();if(!name){showToast("Digite um nome.");return}data.settings[type].push({id:uid("i"),name,active:true});syncCurrentSnapshots();save();closeModal();render();showToast("Item adicionado.")};
 }
 function addMounting(){
-  showModal(`<h2 id="modal-title">Adicionar montagem</h2><div class="field"><label for="new-mounting">Nome</label><input id="new-mounting" autocomplete="off" placeholder="Nome da equipe"></div><div class="field"><label for="new-rate">Valor por par</label><input id="new-rate" inputmode="decimal" placeholder="Ex.: 3,50"></div><div class="button-row"><button class="btn" data-modal-close>Cancelar</button><button class="btn primary" id="confirm-mounting">Adicionar</button></div>`);
+  showModal(`<h2 id="modal-title">Adicionar montagem</h2><div class="field"><label for="new-mounting">Nome</label><input id="new-mounting" autocomplete="off" placeholder="Nome da equipe"></div><div class="field"><label for="new-rate">Referência atual por par (sem vigência histórica)</label><input id="new-rate" inputmode="decimal" placeholder="Ex.: 3,50"></div><div class="button-row"><button class="btn" data-modal-close>Cancelar</button><button class="btn primary" id="confirm-mounting">Adicionar</button></div>`);
   document.getElementById("confirm-mounting").onclick=()=>{const name=document.getElementById("new-mounting").value.trim(),rate=parseMoney(document.getElementById("new-rate").value);if(!name){showToast("Digite o nome da montagem.");return}if(!Number.isFinite(rate)||rate<0){showToast("Digite um valor válido por par.");return}data.settings.mountings.push({id:uid("mt"),name,rate:Math.round(rate*100)/100,active:true});syncCurrentSnapshots();save();closeModal();render();showToast("Montagem adicionada.")};
 }
 async function exportBackup(){
@@ -834,11 +918,11 @@ async function importBackup(file){
   }catch(e){showToast("Este arquivo não é um backup válido do app.")}finally{document.getElementById("backup-file").value=""}
 }
 function shareText(){
-  const key=currentWeekKey(),s=weekSummary(key),mountings=mountingsForWeek(key);
+  const key=currentWeekKey(),s=weekSummary(key);
   return[
     "ACOMPANHAR PRODUÇÃO",`Semana: ${weekLabel(key)}`,`Meta: ${s.goal?fmt(s.goal)+" pares":"não definida"}`,"",
     "COMPONENTES DISPONÍVEIS",...COMPONENTS.map(c=>`${c.name}: ${fmt(s.componentTotals[c.id]||0)} pares`),"",
-    "POR MONTAGEM",...mountings.map(mt=>`${mt.name}: ${fmt(s.byMounting[mt.id]||0)} pares · ${money((s.byMounting[mt.id]||0)*(Number(mt.rate)||0))}`),"",
+    "POR MONTAGEM",...s.mountingValues.mountings.map(row=>`${row.name}: ${row.totalPairs===null?'quantidade a conferir':fmt(row.totalPairs)+' pares'} · ${mountingProductionText(row)}`),"Valores estimados não confirmam custo nem saldo a pagar.","",
     `Pares prontos: ${fmt(s.done)}${s.goal?` · ${pct(s.rate)}`:""}`,`Pode produzir agora: ${fmt(s.possible)} pares`,`Gargalo: ${s.gargalo?.name||"—"}`,`Projeção: ${fmt(s.projection)} pares no ritmo atual`
   ].join("\n");
 }
@@ -853,7 +937,7 @@ function switchTab(tab){
   document.querySelector(".actions").hidden=tab!=="week";render();
 }
 function render(){
-  ensureWeek();
+  invalidateMountingRateDialog();ensureWeek();
   if(ui.tab==="week")renderWeek();
   if(ui.tab==="entry")renderEntry();
   if(ui.tab==="history")renderHistory();
@@ -871,6 +955,7 @@ document.getElementById("edit-goal").onclick=goalModal;
 document.getElementById("share").onclick=share;
 document.getElementById("backup-file").onchange=e=>{const f=e.target.files?.[0];if(f)importBackup(f)};
 document.getElementById("modal").onclick=e=>{if(e.target.id==="modal"||e.target.closest("[data-modal-close]"))closeModal()};
+document.addEventListener("keydown",e=>{if(e.key==="Tab"&&mountingRateAttempt&&!document.getElementById("modal").hidden){const focusable=[...document.getElementById("modal-sheet").querySelectorAll('button:not([disabled]),input:not([disabled]),select:not([disabled]),[tabindex="0"]')];const first=focusable[0],last=focusable[focusable.length-1];if(e.shiftKey&&document.activeElement===first){e.preventDefault();last?.focus()}else if(!e.shiftKey&&document.activeElement===last){e.preventDefault();first?.focus()}}});
 document.addEventListener("keydown",e=>{if(e.key==="Escape"&&!document.getElementById("modal").hidden)closeModal()});
 makeIcon();render();
 // Goal onboarding is decided only after authentication and a confirmed online read.
@@ -1149,7 +1234,7 @@ if("serviceWorker" in navigator)navigator.serviceWorker.register("sw.js").catch(
 
   const oldRender=render;
   render=function(){
-    if(ui.tab==="stock"){ensureWeek();renderStock();return}
+    invalidateMountingRateDialog();if(ui.tab==="stock"){ensureWeek();renderStock();return}
     oldRender();
   };
 
@@ -1422,7 +1507,7 @@ if("serviceWorker" in navigator)navigator.serviceWorker.register("sw.js").catch(
   }
 
   const previousRender=render;
-  render=function(){if(ui.tab==="expenses"){ensureWeek();renderExpenses();return}previousRender()};
+  render=function(){invalidateMountingRateDialog();if(ui.tab==="expenses"){ensureWeek();renderExpenses();return}previousRender()};
   switchTab=function(tab){
     ui.tab=tab;
     document.querySelectorAll("nav [role=tab]").forEach(b=>b.setAttribute("aria-selected",b.dataset.tab===tab));
@@ -1574,7 +1659,7 @@ if("serviceWorker" in navigator)navigator.serviceWorker.register("sw.js").catch(
     document.querySelectorAll("[data-sales-receipt]").forEach(b=>b.onclick=()=>{const order=data.salesControl.orders.find(x=>x.id===b.dataset.salesReceipt);if(order)openReceipt(order);else showToast("Pedido não encontrado. Abra a aba Pedidos novamente.")});
   }
   const prevRenderSales=render;
-  render=function(){if(ui.tab==="sales"){ensureWeek();renderSales();return}prevRenderSales()};
+  render=function(){invalidateMountingRateDialog();if(ui.tab==="sales"){ensureWeek();renderSales();return}prevRenderSales()};
   const prevSwitchSales=switchTab;
   switchTab=function(tab){prevSwitchSales(tab);if(tab==="sales"){["week","stock","expenses","sales","entry","history","settings"].forEach(k=>{const el=document.getElementById("tab-"+k);if(el)el.hidden=k!==tab});renderSales()}};
   document.querySelectorAll('nav [role=tab]').forEach(b=>b.onclick=()=>switchTab(b.dataset.tab));
@@ -1624,7 +1709,7 @@ if("serviceWorker" in navigator)navigator.serviceWorker.register("sw.js").catch(
     else if(goalDialog==="onboarding")closeModal();
   }
   const authRoot=document.getElementById("remote-auth"),authMsg=document.getElementById("remote-auth-msg"),loginForm=document.getElementById("remote-login-form"),activateForm=document.getElementById("remote-activate-form"),firstAccess=document.getElementById("remote-first-access");
-  const setStatus=text=>{const el=document.getElementById("header-status");if(el)el.textContent=text};
+  const setStatus=text=>{const el=document.getElementById("header-status");if(el)el.textContent=text;refreshMountingRateAvailability()};
   const authMessage=(text,error=false)=>{authMsg.textContent=text||"";authMsg.classList.toggle("error",!!error)};
   const unlock=()=>{document.body.classList.remove("remote-lock");authRoot.hidden=true},lock=()=>{
     authenticated=false;authenticatedUser=null;remoteReady=false;confirmedData=null;promptedWeek=null;loadSequence++;clearTimeout(saveTimer);
@@ -1692,7 +1777,7 @@ if("serviceWorker" in navigator)navigator.serviceWorker.register("sw.js").catch(
       if(sequence!==loadSequence||!authenticated)return false;
       await restorePendingOrRemote(row);
       if(sequence!==loadSequence||!authenticated)return false;
-      remoteReady=true;unlock();subscribeRealtime();reconcileGoalPrompt();return true;
+      remoteReady=true;unlock();refreshMountingRateAvailability();subscribeRealtime();reconcileGoalPrompt();return true;
     }catch(_){
       if(sequence===loadSequence){lock();authMessage("Não foi possível carregar a base online. Confira a conexão e o acesso da conta e tente entrar novamente.",true)}
       return false;
