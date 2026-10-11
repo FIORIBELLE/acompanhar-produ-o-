@@ -59,6 +59,21 @@
       const isLine=['solado','palmilha'].includes(e.sector), ref=String(e.ref).toUpperCase();
       const line=ref.startsWith('@LINE:') ? ref.slice(6) : ((ref.match(/\d/)?.[0] || '')+'00');
       if (isLine && !/^\d00$/.test(line)) {report('invalid_stock',e,'Linha do componente não identificada.');continue}
+      // Located adjustments change both ledgers with a single source record.
+      // Never represent a physical correction as production or a payment.
+      if (e.adjustmentVersion!==undefined || e.mountingId!==undefined || e.reversalOf!==undefined || e.adjustmentBatchId!==undefined) {
+        if(e.adjustmentVersion!==1 || typeof e.adjustmentBatchId!=='string' || !e.adjustmentBatchId.trim() || typeof e.reason!=='string' || !e.reason.trim() || e.reason.length>500 || typeof e.createdAt!=='string' || !Number.isFinite(Date.parse(e.createdAt)) || !String(e.color||'').trim()) {report('invalid_adjustment',e,'Ajuste sem versão, lote, motivo, cor ou horário válido.');continue}
+        if(e.mountingId!==undefined) {
+          const matches=models.filter(m=>refOf(m)===ref);
+          if(!knownMounts.has(e.mountingId) || !components.includes(e.sector) || (e.sector==='cabedal' && matches.length!==1) || (isLine && e.ref!=='@line:'+line)) {report('invalid_adjustment',e,'Montagem ou referência do ajuste inválida ou ambígua.');continue}
+          add('mounting',e.mountingId,e.sector,e.sector==='cabedal'?matches[0].id:line,colorKey(e.color),e.date,e.qty*(e.direction==='out'?-1:1),e.id);
+        }
+        if(e.reversalOf!==undefined) {
+          const original=state.stockLedger.find(x=>x.id===e.reversalOf);
+          const same=original && original.adjustmentVersion===1 && !original.reversalOf && original.id!==e.id && original.direction!==e.direction && original.date<=e.date && ['sector','ref','color','qty','mountingId'].every(k=>original[k]===e[k]);
+          if(!same || state.stockLedger.filter(x=>x.reversalOf===e.reversalOf).length!==1) {report('invalid_reversal',e,'Estorno inválido ou repetido.');continue}
+        }
+      }
       add('global','all',e.sector,isLine?'@line:'+line:ref,colorKey(e.color),e.date,e.qty*(e.direction==='out'?-1:1),e.id);
     }
     const daily=new Map();
@@ -67,17 +82,32 @@
       const key=JSON.stringify([e.scope,e.location,e.sector,e.target,e.color,e.date]);
       if(!daily.has(key)) daily.set(key,{...e,delta:0});
       daily.get(key).delta+=e.delta;
+      if(!Number.isSafeInteger(daily.get(key).delta))report('invalid_quantity',e,'Movimentos do dia excedem o limite seguro de pares.');
     }
     const balances=new Map();
     for (const e of [...daily.values()].sort((a,b)=>a.date.localeCompare(b.date))) {
       const key=JSON.stringify([e.scope,e.location,e.sector,e.target,e.color]);
       if (!balances.has(key)) balances.set(key,{...e,qty:0});
       const row=balances.get(key);row.qty+=e.delta;
+      if(!Number.isSafeInteger(row.qty))report('invalid_quantity',e,'Saldo fora do limite seguro de pares.');
       if(row.qty<0) {
         const place=e.scope==='mounting'?(mountings.find(m=>m.id===e.location)?.name||e.location):'estoque total';
         const label=e.sector==='cabedal'&&e.scope==='mounting'?'Ref. '+refOf(byId.get(e.target)):String(e.target).startsWith('@line:')?'Linha '+String(e.target).slice(6):['solado','palmilha'].includes(e.sector)?'Linha '+e.target:'Ref. '+e.target;
         const dateLabel=e.date.split('-').reverse().join('/');
         issues.push({code:'insufficient_stock',scope:e.scope,location:e.location,sector:e.sector,target:e.target,color:e.color,date:e.date,missing:-row.qty,message:`Saldo insuficiente: faltam ${-row.qty} pares de ${e.sector} · ${label} · ${colorLabel(e.color)} em ${place}, na data ${dateLabel}.`});
+      }
+    }
+    if((state.stockLedger||[]).some(e=>e.adjustmentVersion===1)) {
+      const chronological=new Map(), dates=[...new Set(events.filter(e=>!options.until||e.date<=options.until).map(e=>e.date))].sort();
+      for(const date of dates) {
+        for(const e of events.filter(e=>e.date===date)) {
+          if(!components.includes(e.sector))continue;
+          const target=e.scope==='global'?e.target:e.sector==='cabedal'?refOf(byId.get(e.target)):'@line:'+e.target;
+          const k=JSON.stringify([e.sector,target,e.color]), row=chronological.get(k)||{global:0,mounted:0,sector:e.sector,target,color:e.color};
+          row[e.scope==='global'?'global':'mounted']+=e.delta;chronological.set(k,row);
+          if(!Number.isSafeInteger(row.global)||!Number.isSafeInteger(row.mounted))report('invalid_quantity',e,'Soma de saldos fora do limite seguro de pares.');
+        }
+        for(const row of chronological.values())if(row.mounted>row.global)issues.push({code:'mounting_global_divergence',date,...row,message:'Saldo nas montagens maior que o saldo total. Confira os ajustes de materiais.'});
       }
     }
     return {rows:[...balances.values()],issues};

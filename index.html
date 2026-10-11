@@ -222,7 +222,7 @@ footer{color:var(--soft);font-size:.78rem;text-align:center;padding:8px 0 24px}
     <button class="btn" id="edit-goal" type="button">Editar meta</button>
     <button class="btn primary" id="share" type="button">Compartilhar resumo</button>
   </div>
-  <footer id="app-footer">Base online Fiori Belle · sincronização automática · v2026.10.08-r8.6</footer>
+  <footer id="app-footer">Base online Fiori Belle · sincronização automática · v2026.10.11-r8.6.2</footer>
 </div>
 
 <div class="toast" id="toast" hidden role="status" aria-live="polite"></div>
@@ -231,7 +231,7 @@ footer{color:var(--soft);font-size:.78rem;text-align:center;padding:8px 0 24px}
 </div>
 <input id="backup-file" type="file" accept="application/json,.json" hidden>
 
-<script src="inventory-guard.js"></script>
+<script src="inventory-guard.js?v=35"></script>
 <script src="dashboard-view.js?v=34"></script>
 <script src="sales-receipt.js"></script>
 <script src="sales-order.js?v=28"></script>
@@ -239,6 +239,7 @@ footer{color:var(--soft);font-size:.78rem;text-align:center;padding:8px 0 24px}
 <script src="finance-preview.js?v=28"></script>
 <script src="assembly-finance.js?v=30"></script>
 <script src="standard-sheet.js?v=33"></script>
+<script src="stock-adjustment.js?v=35"></script>
 <script>
 "use strict";
 const STORAGE_KEY="acompanhar_producao_v2";
@@ -1116,7 +1117,7 @@ document.getElementById("edit-goal").onclick=goalModal;
 document.getElementById("share").onclick=share;
 document.getElementById("backup-file").onchange=e=>{const f=e.target.files?.[0];if(f)importBackup(f)};
 document.getElementById("modal").onclick=e=>{if(e.target.id==="modal"||e.target.closest("[data-modal-close]"))closeModal()};
-document.addEventListener("keydown",e=>{if(e.key==="Tab"&&(mountingRateAttempt||goalDialog==="sheet-pattern")&&!document.getElementById("modal").hidden){const focusable=[...document.getElementById("modal-sheet").querySelectorAll('button:not([disabled]),input:not([disabled]),select:not([disabled]),[tabindex="0"]')];const first=focusable[0],last=focusable[focusable.length-1];if(e.shiftKey&&document.activeElement===first){e.preventDefault();last?.focus()}else if(!e.shiftKey&&document.activeElement===last){e.preventDefault();first?.focus()}}});
+document.addEventListener("keydown",e=>{if(e.key==="Tab"&&(mountingRateAttempt||goalDialog==="sheet-pattern"||goalDialog==="stock-adjustment")&&!document.getElementById("modal").hidden){const focusable=[...document.getElementById("modal-sheet").querySelectorAll('button:not([disabled]),input:not([disabled]),select:not([disabled]),[tabindex="0"]')];const first=focusable[0],last=focusable[focusable.length-1];if(e.shiftKey&&document.activeElement===first){e.preventDefault();last?.focus()}else if(!e.shiftKey&&document.activeElement===last){e.preventDefault();first?.focus()}}});
 document.addEventListener("keydown",e=>{if(e.key==="Escape"&&!document.getElementById("modal").hidden)closeModal()});
 makeIcon();render();
 // Goal onboarding is decided only after authentication and a confirmed online read.
@@ -1234,8 +1235,153 @@ if("serviceWorker" in navigator)navigator.serviceWorker.register("sw.js").catch(
     return{bySector,totalKnown,totalPending,positive,issues:state.issues};
   }
 
-  let stockSubmissionGeneration=0;
+  let stockSubmissionGeneration=0,stockAdjustmentAttempt=null;
+  const adjustmentProtected=movement=>!!(movement?.adjustmentBatchId||movement?.adjustmentVersion||movement?.reversalOf);
+  const adjustmentLocation=row=>row.mountingId
+    ?(row.mountingName||data.settings.mountings.find(m=>m.id===row.mountingId)?.name||row.mountingId)
+    :(row.sector==="produto_pronto"?"Produto pronto · estoque global":"Fábrica · materiais sem montagem");
+  function adjustmentRowsMarkup(rows){
+    return rows.length?rows.map(row=>`<div class="row"><div class="row-top"><strong>${esc(adjustmentLocation(row))}</strong><span class="value">${row.direction==="in"?"+":row.direction==="out"?"−":""}${stockFmt(row.qty)} pares</span></div><div class="votes">${esc(sectorById(row.sector)?.name||row.sector)} · ${esc(displayRef(row.ref||row.target))} · ${esc(normalizeColor(row.color)||"Sem cor discriminada")}</div></div>`).join(""):"<p class=\"empty\">Nenhum saldo positivo para ajustar nesta data.</p>";
+  }
+  function adjustmentResetMarkup(preview){
+    return `<p class="notice">Serão retirados todos os produtos prontos do estoque global e os materiais de todas as montagens, inclusive inativas, na data escolhida.</p><div class="summary-grid">${STOCK_SECTORS.map(sector=>`<div class="summary-stat"><strong>${stockFmt(preview.totals?.[sector.id])} pares</strong><span>${esc(sector.name)}</span></div>`).join("")}</div>${adjustmentRowsMarkup(preview.rows)}<details><summary>Materiais da fábrica preservados · ${stockFmt((preview.factoryRows||[]).reduce((sum,row)=>sum+row.qty,0))} pares</summary><p class="sub">Estes materiais sem montagem não entram na zeragem.</p>${(preview.factoryRows||[]).length?adjustmentRowsMarkup(preview.factoryRows):'<p class="sub">Nenhum saldo positivo de material sem montagem.</p>'}</details>${preview.issues?.length?`<p class="notice" role="alert">${preview.issues.map(issue=>esc(issue.message||issue)).join("<br>")}</p>`:""}`;
+  }
+  function stockAdjustmentCurrent(attempt,version){
+    return stockAdjustmentAttempt===attempt&&!attempt.used&&ui.tab==="stock"&&attempt.generation===stockSubmissionGeneration&&goalDialog==="stock-adjustment"&&goalDialogVersion===version&&!document.getElementById("modal").hidden;
+  }
+  function invalidateStockAdjustmentDialog(){
+    if(goalDialog==="stock-adjustment")closeModal();
+    stockAdjustmentAttempt=null;
+  }
+  function stockAdjustmentReady(attempt){
+    if(assemblyBusy()||attempt.fingerprint!==JSON.stringify(data)){
+      closeModal();showToast("Os dados mudaram ou há confirmação online pendente. Aguarde a base online e reabra o ajuste.");return false;
+    }
+    if(typeof FioriStockAdjustments==="undefined"){
+      closeModal();showToast("Recarregue o app para carregar os ajustes por montagem.");return false;
+    }
+    if(typeof window.fioriOnline?.getAdjustmentBase==="function"){
+      const confirmed=window.fioriOnline.getAdjustmentBase();
+      if(!confirmed||JSON.stringify(confirmed)!==attempt.baseFingerprint){closeModal();showToast("A base online mudou ou ainda não foi confirmada. Aguarde e reabra o ajuste.");return false}
+    }
+    return true;
+  }
+  function openStockAdjustment(kind="manual",originalBatchId=null){
+    if(ui.tab!=="stock")return;
+    if(assemblyBusy()){showToast("Aguarde a confirmação da base online ou resolva o conflito antes de ajustar o estoque.");return}
+    if(typeof FioriStockAdjustments==="undefined"){showToast("Recarregue o app para carregar os ajustes por montagem.");return}
+    // Rendering may create a new local week. Adjust only the confirmed online
+    // document so an inventory correction never also writes that derived week.
+    const base=typeof window.fioriOnline?.getAdjustmentBase==="function"?window.fioriOnline.getAdjustmentBase():clone(data);
+    if(!base){showToast("Aguarde a base online confirmar os dados antes de abrir o ajuste.");return}
+    if(kind==="reverse"&&!(base.stockLedger||[]).some(row=>row.adjustmentBatchId===originalBatchId))return;
+    const attempt={id:uid("stkadjust"),kind,originalBatchId,date:spDate(),reason:"",mountingId:"",direction:"out",sector:"cabedal",ref:"",color:"",qty:"",createdAt:new Date().toISOString(),base,baseFingerprint:JSON.stringify(base),fingerprint:JSON.stringify(data),generation:stockSubmissionGeneration,phase:"form",used:false};
+    stockAdjustmentForm(attempt);
+  }
+  function stockAdjustmentInput(attempt){
+    if(!FioriInventory.validDate(attempt.date)||attempt.date>spDate())throw Error("Escolha uma data válida, até hoje.");
+    const reason=attempt.reason.trim();if(!reason)throw Error("Informe o motivo do ajuste.");
+    const input={batchId:attempt.id,date:attempt.date,reason};
+    if(attempt.kind==="reverse")return {...input,originalBatchId:attempt.originalBatchId};
+    if(attempt.kind==="reset"){
+      const preview=FioriStockAdjustments.previewReset(attempt.base,{date:attempt.date},{inventory:FioriInventory});
+      if(preview.issues?.length)throw Error(preview.issues[0].message||String(preview.issues[0]));
+      if(!preview.rows.length)throw Error("Não há saldo positivo para zerar nesta data.");
+      return {...input,rows:preview.rows.map(row=>({...row,direction:"out"}))};
+    }
+    if(!attempt.mountingId)throw Error("Escolha a montagem ou o estoque da fábrica.");
+    if(attempt.mountingId!=="__global__"&&!attempt.base.settings.mountings.some(m=>m.id===attempt.mountingId))throw Error("Montagem não encontrada. Reabra o ajuste.");
+    if(!["in","out"].includes(attempt.direction)||!sectorById(attempt.sector))throw Error("Escolha o movimento e o setor.");
+    if(attempt.sector==="produto_pronto"&&attempt.mountingId!=="__global__")throw Error("Produto pronto pertence ao estoque global. Escolha a fábrica.");
+    if(!attempt.ref)throw Error("Escolha a referência ou linha.");
+    const color=normalizeColor(attempt.color);if(!color)throw Error("Informe a cor. Se desconhecida, informe Sem cor discriminada.");
+    const raw=attempt.qty.trim(),qty=Number(raw);
+    if(!/^\d+$/.test(raw)||!Number.isSafeInteger(qty)||qty<=0)throw Error("Use uma quantidade inteira de pares maior que zero, sem vírgula.");
+    return {...input,rows:[{direction:attempt.direction,sector:attempt.sector,ref:attempt.ref,color,qty,...(attempt.mountingId==="__global__"?{}:{mountingId:attempt.mountingId})}]};
+  }
+  function stockAdjustmentCandidate(attempt,input){
+    const options={today:spDate(),now:attempt.createdAt,inventory:FioriInventory};
+    return attempt.kind==="reverse"?FioriStockAdjustments.reverseBatch(attempt.base,input,options):FioriStockAdjustments.createBatch(attempt.base,input,options);
+  }
+  function stockAdjustmentForm(attempt,errorMessage=""){
+    attempt.phase="form";stockAdjustmentAttempt=attempt;
+    const manual=attempt.kind==="manual",reset=attempt.kind==="reset";
+    const title=manual?"Ajuste por montagem":reset?"Revisar zeragem":"Estornar lote";
+    showModal(`<h2 id="modal-title">${title}</h2><p class="sub">${manual?"Registre somente a diferença conferida fisicamente, em pares. O ajuste não cria produção nem acerto financeiro.":reset?"Confira todos os saldos e informe o motivo. A revisão não altera o estoque.":"O estorno adiciona movimentos contrários ao lote inteiro. Os registros originais continuam no histórico."}</p><form id="stock-adjustment-form" novalidate>
+      <div class="field"><label for="stock-adjustment-date">Data do ${attempt.kind==="reverse"?"estorno":"ajuste"}</label><input id="stock-adjustment-date" type="date" required max="${spDate()}" value="${esc(attempt.date)}"></div>
+      ${manual?`<div class="field"><label for="stock-adjustment-mounting">Montagem / local do saldo</label><select id="stock-adjustment-mounting" required><option value="">Escolha a montagem</option>${data.settings.mountings.map(m=>`<option value="${esc(m.id)}">${esc(m.name)}${m.active===false?" · inativa":""}</option>`).join("")}<option value="__global__">Fábrica / Produto pronto global</option></select></div><div class="form-grid"><div class="field"><label for="stock-adjustment-direction">Movimento</label><select id="stock-adjustment-direction"><option value="out">Saída (reduzir saldo)</option><option value="in">Entrada (aumentar saldo)</option></select></div><div class="field"><label for="stock-adjustment-sector">Setor</label><select id="stock-adjustment-sector"></select></div></div><div class="field"><label for="stock-adjustment-ref" id="stock-adjustment-ref-label">Referência</label><select id="stock-adjustment-ref" required></select></div><div class="form-grid"><div class="field"><label for="stock-adjustment-color">Cor</label><input id="stock-adjustment-color" list="stock-colors" required autocomplete="off" value="${esc(attempt.color)}" placeholder="Ex.: Preto"></div><div class="field"><label for="stock-adjustment-qty">Quantidade em pares</label><input id="stock-adjustment-qty" inputmode="numeric" required autocomplete="off" value="${esc(attempt.qty)}" placeholder="0"></div></div><p class="sub" id="stock-adjustment-scope-hint"></p>`:""}
+      <div class="field"><label for="stock-adjustment-reason">Motivo obrigatório</label><input id="stock-adjustment-reason" required maxlength="500" autocomplete="off" value="${esc(attempt.reason)}" placeholder="Ex.: conferência física e correção de saldo"></div>
+      ${reset?'<div id="stock-adjustment-reset-preview" aria-live="polite"></div>':""}
+      ${attempt.kind==="reverse"?`<div id="stock-adjustment-original"><p class="sub">Lote original · ${esc(attempt.originalBatchId)}</p>${adjustmentRowsMarkup(attempt.base.stockLedger.filter(row=>row.adjustmentBatchId===attempt.originalBatchId).map(row=>({...row,direction:row.direction==="in"?"out":"in"})))}</div>`:""}
+      <p id="stock-adjustment-error" class="notice" role="alert" ${errorMessage?"":"hidden"}>${esc(errorMessage)}</p><div class="button-row"><button class="btn" type="button" data-modal-close>Cancelar</button><button class="btn primary" id="stock-adjustment-review" type="submit">${reset?"Revisar os movimentos":attempt.kind==="reverse"?"Revisar estorno":"Revisar ajuste"}</button></div></form>`,"stock-adjustment");
+    const version=goalDialogVersion,form=document.getElementById("stock-adjustment-form"),date=document.getElementById("stock-adjustment-date"),reason=document.getElementById("stock-adjustment-reason");
+    date.value=attempt.date;reason.value=attempt.reason;
+    if(manual){
+      const mounting=document.getElementById("stock-adjustment-mounting"),direction=document.getElementById("stock-adjustment-direction"),sector=document.getElementById("stock-adjustment-sector"),ref=document.getElementById("stock-adjustment-ref");
+      mounting.value=attempt.mountingId;direction.value=attempt.direction;
+      function targets(selected=attempt.ref){
+        const shared=["solado","palmilha"].includes(sector.value);
+        document.getElementById("stock-adjustment-ref-label").textContent=shared?"Linha":"Referência";
+        ref.innerHTML=shared?availableLines().filter(line=>sector.value!=="palmilha"||(line!=="300"&&data.settings.lineCosts?.[line]?.usesPalmilha!==false)).map(line=>`<option value="${esc(linePoolRef(line))}">Linha ${esc(line)}</option>`).join(""):allRefSheets().map(sheet=>`<option value="${esc(sheet.ref)}">${esc(sheet.ref)} · ${esc(sheet.model||"")}</option>`).join("");
+        if([...ref.options].some(option=>option.value===selected))ref.value=selected;
+        attempt.ref=ref.value;
+      }
+      function sectors(){
+        const selected=sector.value||attempt.sector;
+        sector.innerHTML=STOCK_SECTORS.filter(item=>mounting.value==="__global__"||item.id!=="produto_pronto").map(item=>`<option value="${item.id}">${esc(item.name)}</option>`).join("");
+        if([...sector.options].some(option=>option.value===selected))sector.value=selected;
+        attempt.sector=sector.value;targets();
+        document.getElementById("stock-adjustment-scope-hint").textContent=mounting.value==="__global__"?"Materiais serão ajustados somente na fábrica. Produto pronto tem saldo global.":"O saldo será ajustado somente na montagem escolhida e no total geral do estoque.";
+      }
+      mounting.onchange=()=>{if(stockAdjustmentCurrent(attempt,version)){attempt.mountingId=mounting.value;sectors()}};
+      sector.onchange=()=>{if(stockAdjustmentCurrent(attempt,version)){attempt.sector=sector.value;targets("")}};
+      sectors();
+    }
+    function refreshReset(){
+      if(!reset||!stockAdjustmentCurrent(attempt,version))return;
+      const previewNode=document.getElementById("stock-adjustment-reset-preview"),review=document.getElementById("stock-adjustment-review");
+      try{
+        if(!FioriInventory.validDate(date.value)||date.value>spDate())throw Error("Escolha uma data válida, até hoje, para revisar os saldos.");
+        const preview=FioriStockAdjustments.previewReset(attempt.base,{date:date.value},{inventory:FioriInventory});
+        previewNode.innerHTML=adjustmentResetMarkup(preview);review.disabled=!preview.rows.length||!!preview.issues?.length;
+      }catch(error){previewNode.textContent=error.message;review.disabled=true}
+    }
+    date.onchange=()=>{if(stockAdjustmentCurrent(attempt,version)){attempt.date=date.value;refreshReset()}};
+    refreshReset();
+    form.onsubmit=e=>{
+      e.preventDefault();if(!stockAdjustmentCurrent(attempt,version)||attempt.phase!=="form")return;
+      if(!stockAdjustmentReady(attempt))return;
+      attempt.date=date.value;attempt.reason=reason.value;
+      if(manual)for(const field of ["mounting","direction","sector","ref","color","qty"])attempt[field==="mounting"?"mountingId":field]=document.getElementById("stock-adjustment-"+field).value;
+      try{
+        const input=stockAdjustmentInput(attempt);stockAdjustmentCandidate(attempt,input);
+        stockAdjustmentConfirm(attempt,input);
+      }catch(error){const alert=document.getElementById("stock-adjustment-error");alert.textContent=error.message;alert.hidden=false}
+    };
+    date.focus?.();
+  }
+  function stockAdjustmentConfirm(attempt,input){
+    attempt.phase="confirm";
+    const reset=attempt.kind==="reset",reverse=attempt.kind==="reverse";
+    const rows=reverse?attempt.base.stockLedger.filter(row=>row.adjustmentBatchId===attempt.originalBatchId).map(row=>({...row,direction:row.direction==="in"?"out":"in"})):input.rows;
+    const title=reset?"Confirmar zeragem?":reverse?"Confirmar estorno do lote?":"Confirmar ajuste?";
+    const preview=reset?FioriStockAdjustments.previewReset(attempt.base,{date:input.date},{inventory:FioriInventory}):null;
+    showModal(`<h2 id="modal-title">${title}</h2><p><strong>Data:</strong> ${fmtDate(input.date)}</p><p><strong>Motivo:</strong> ${esc(input.reason)}</p>${reset?adjustmentResetMarkup(preview):adjustmentRowsMarkup(rows)}<p class="notice">${reset?"A zeragem será registrada em um único lote de saídas. ":""}${reverse?"O lote original será preservado. ":"Este lote não poderá ser apagado. Correções serão feitas por estorno. "}Produção, pagamentos e acertos permanecem preservados.</p><p class="sub">Após confirmar, aguarde a base online confirmar o salvamento antes de fazer outro lançamento.</p><div class="button-row"><button class="btn" type="button" data-modal-close>Cancelar</button><button class="btn" type="button" id="stock-adjustment-back">Voltar</button><button class="btn ${reset?"danger":"primary"}" type="button" id="stock-adjustment-confirm">${reset?"Confirmar zeragem":reverse?"Confirmar estorno":"Confirmar ajuste"}</button></div>`,"stock-adjustment");
+    const version=goalDialogVersion,confirm=document.getElementById("stock-adjustment-confirm");let used=false;
+    document.getElementById("stock-adjustment-back").onclick=()=>{if(!used&&stockAdjustmentCurrent(attempt,version))stockAdjustmentForm(attempt)};
+    confirm.onclick=()=>{
+      if(used||!stockAdjustmentCurrent(attempt,version)||attempt.phase!=="confirm")return;
+      used=true;confirm.disabled=true;if(!stockAdjustmentReady(attempt))return;
+      try{
+        const previous=data,next=stockAdjustmentCandidate(attempt,input);
+        if(!persistCandidate(next,previous)){stockAdjustmentForm(attempt,"O lote não foi salvo. Confira a conexão e o espaço neste aparelho, depois revise novamente.");return}
+        attempt.used=true;closeModal();render();showToast(`${reverse?"Estorno":reset?"Zeragem":"Ajuste"} registrado neste aparelho. Aguardando confirmação online.`);
+      }catch(error){stockAdjustmentForm(attempt,error.message)}
+    };
+    document.getElementById("stock-adjustment-back").focus?.();
+  }
   function renderStock(){
+    invalidateStockAdjustmentDialog();
     const submission={generation:++stockSubmissionGeneration,id:uid("stkbatch"),used:false,snapshot:JSON.stringify(data)};
     const root=document.getElementById("tab-stock");
     if(!root)return;
@@ -1271,6 +1417,12 @@ if("serviceWorker" in navigator)navigator.serviceWorker.register("sw.js").catch(
     }).join("");
 
     const history=[...data.stockLedger].sort((a,b)=>String(b.createdAt||b.date).localeCompare(String(a.createdAt||a.date))).slice(0,30);
+    const reversedBatchIds=new Set(data.stockLedger.filter(row=>row.reversalOf).map(row=>data.stockLedger.find(original=>original.id===row.reversalOf)?.adjustmentBatchId).filter(Boolean)),shownBatches=new Set();
+    const historyMarkup=history.map(m=>{
+      const protectedRow=adjustmentProtected(m),firstInBatch=m.adjustmentBatchId&&!shownBatches.has(m.adjustmentBatchId);shownBatches.add(m.adjustmentBatchId);
+      const action=protectedRow?(m.reversalOf?'<span class="stock-muted">Estorno compensatório</span>':reversedBatchIds.has(m.adjustmentBatchId)?'<span class="stock-muted">Lote estornado</span>':firstInBatch?`<button class="btn small" type="button" data-stock-reverse="${esc(m.adjustmentBatchId)}" ${assemblyBusy()||typeof FioriStockAdjustments==="undefined"?'disabled':''}>Estornar lote</button>`:'<span class="stock-muted">Mesmo lote · histórico protegido</span>'):`<button class="icon-btn danger" type="button" data-stock-delete="${esc(m.id)}">Apagar</button>`;
+      return `<div class="row" ${protectedRow?`data-stock-adjustment="${esc(m.adjustmentBatchId||m.id)}"`:""}><div class="row-top"><div><span class="name">${m.direction==="out"?"Saída":"Entrada"} · ${esc(sectorById(m.sector)?.name||m.sector)}</span><div class="votes">${fmtDate(m.date)} · ${esc(displayRef(m.ref))} · ${esc(normalizeColor(m.color)||"Sem cor")} · ${stockFmt(m.qty)} pares${esc(recordedSizeText(m))}${m.sheetBatchId?" · ficha por cores":""}${m.note&&!protectedRow?` · ${esc(m.note)}`:""}</div>${protectedRow?`<div class="votes">${esc(adjustmentLocation(m))} · Motivo: ${esc(m.reason||"Não informado")}</div><div class="stock-muted">Lote ${esc(m.adjustmentBatchId||m.id)} · registro preservado</div>`:""}</div>${action}</div></div>`;
+    }).join("");
     root.innerHTML=`
       <div class="block stock-total">
         <div class="sub">Valor total parado na fábrica</div>
@@ -1283,6 +1435,8 @@ if("serviceWorker" in navigator)navigator.serviceWorker.register("sw.js").catch(
       <div class="notice"><strong>Sincronizado com Produção.</strong> Cabedal, palmilha e solado lançados para a montagem entram automaticamente no estoque. Ao lançar Produto pronto, os componentes são baixados e os pares passam para Produto pronto.</div>
 
       <div class="stock-grid">${sectorCards}</div>
+
+      <div class="block" id="stock-adjustments"><h2>Ajuste por montagem</h2><p class="sub">Corrija o saldo por montagem, referência ou linha e cor. Toda alteração exige data, motivo, revisão e confirmação. O histórico é preservado por lote.</p><div class="button-row"><button class="btn primary" id="stock-adjustment-open" type="button" ${assemblyBusy()||typeof FioriStockAdjustments==="undefined"?'disabled':''}>Novo ajuste por montagem</button><button class="btn" id="stock-reset-open" type="button" ${assemblyBusy()||typeof FioriStockAdjustments==="undefined"?'disabled':''}>Revisar zeragem</button></div><p id="stock-adjustment-online-status" class="notice" role="status" ${assemblyBusy()?"":"hidden"}>Aguarde a confirmação online ou resolva o conflito antes de lançar outro ajuste.</p>${typeof FioriStockAdjustments==="undefined"?'<p class="notice" role="alert">Recarregue o app para carregar os ajustes por montagem.</p>':""}</div>
 
       <form class="block" id="stock-form">
         <h2>Ajuste manual de estoque</h2>
@@ -1312,13 +1466,16 @@ if("serviceWorker" in navigator)navigator.serviceWorker.register("sw.js").catch(
       ${details}
 
       <div class="block"><h2>Ajustes manuais recentes</h2><p class="sub">Últimos 30 ajustes feitos diretamente no estoque. Os movimentos da produção entram automaticamente e não precisam ser repetidos aqui.</p>
-        ${history.length?history.map(m=>`<div class="row"><div class="row-top"><div><span class="name">${m.direction==="out"?"Saída":"Entrada"} · ${esc(sectorById(m.sector)?.name||m.sector)}</span><div class="votes">${fmtDate(m.date)} · Ref. ${esc(m.ref)} · ${esc(normalizeColor(m.color)||"Sem cor")} · ${stockFmt(m.qty)} pares${esc(recordedSizeText(m))}${m.sheetBatchId?" · ficha por cores":""}${m.note?` · ${esc(m.note)}`:""}</div></div><button class="icon-btn danger" type="button" data-stock-delete="${esc(m.id)}">Apagar</button></div></div>`).join(""):'<div class="empty">Nenhum movimento lançado.</div>'}
+        ${history.length?historyMarkup:'<div class="empty">Nenhum movimento lançado.</div>'}
       </div>
 
       <div class="block"><h2>Custos das fichas</h2><p class="sub">Catálogo incorporado a partir da base “Referências e Custos” do Registro Operacional.</p>
         <div class="calc">Atualização do catálogo: ${esc(updated)}. O site usa custo de cabedal, solado, palmilha e custo total separadamente.</div>
       </div>`;
 
+    document.getElementById("stock-adjustment-open").onclick=()=>{if(ui.tab==="stock"&&submission.generation===stockSubmissionGeneration)openStockAdjustment()};
+    document.getElementById("stock-reset-open").onclick=()=>{if(ui.tab==="stock"&&submission.generation===stockSubmissionGeneration)openStockAdjustment("reset")};
+    document.querySelectorAll("[data-stock-reverse]").forEach(button=>button.onclick=()=>{if(ui.tab==="stock"&&submission.generation===stockSubmissionGeneration)openStockAdjustment("reverse",button.dataset.stockReverse)});
     const form=document.getElementById("stock-form");
     const sectorEl=document.getElementById("stock-sector");
     const refEl=document.getElementById("stock-ref");
@@ -1399,10 +1556,12 @@ if("serviceWorker" in navigator)navigator.serviceWorker.register("sw.js").catch(
       const id=btn.dataset.stockDelete;
       const movement=data.stockLedger.find(x=>x.id===id);
       if(!movement)return;
+      if(adjustmentProtected(movement)){showToast("Este movimento é um ajuste protegido. Use Estornar lote para corrigir sem apagar o histórico.");return}
       if(movement.sheetBatchId){showToast("Este movimento faz parte de uma ficha por cores. A correção exige revisão do lote completo.");return}
       const problems=FioriInventory.validate({...data,stockLedger:data.stockLedger.filter(x=>x.id!==id)});
       if(problems.length){showToast("Não é possível apagar. "+problems[0].message);return}
       confirmAction({title:"Apagar movimento?",message:`${movement.direction==="out"?"Saída":"Entrada"} de ${stockFmt(movement.qty)} pares da Ref. ${movement.ref} · ${movement.color}.`,confirmText:"Apagar",danger:true,onConfirm:()=>{
+        if(adjustmentProtected(data.stockLedger.find(x=>x.id===id))){showToast("Este ajuste tem histórico protegido. Use Estornar lote.");return}
         data.stockLedger=data.stockLedger.filter(x=>x.id!==id);save();renderStock();showToast("Movimento apagado.");
       }});
     });
@@ -1410,7 +1569,7 @@ if("serviceWorker" in navigator)navigator.serviceWorker.register("sw.js").catch(
 
   const oldRender=render;
   render=function(){
-    invalidateMountingRateDialog();invalidateSheetPatternDialog();if(ui.tab==="stock"){ensureWeek();renderStock();return}
+    invalidateStockAdjustmentDialog();invalidateMountingRateDialog();invalidateSheetPatternDialog();if(ui.tab==="stock"){ensureWeek();renderStock();return}
     oldRender();
   };
 
@@ -2081,7 +2240,7 @@ if("serviceWorker" in navigator)navigator.serviceWorker.register("sw.js").catch(
     }catch(_){if(sequence===loadSequence){lock();authMessage("Não foi possível conferir a sessão. Confira a conexão e tente novamente.",true)}}
   }
   sb.auth.onAuthStateChange((event,session)=>{if(!session||(authenticated&&session.user?.id!==authenticatedUser)){lock();setStatus("Entre para acessar a base online")}});
-  window.fioriOnline={onlineMode:true,canEditGoal,needsGoal,setInitialGoal,signOut:async()=>{if(hasPending())throw new Error("Há alterações pendentes; aguarde a confirmação.");lock();await sb.auth.signOut();location.reload()},refresh:async()=>{if(!canWrite())throw new Error("Entre e aguarde a base online.");if(hasPending()||syncConflict)throw new Error("Há alteração pendente ou conflito protegido.");const sequence=loadSequence,row=await fetchRemoteState();if(sequence===loadSequence&&canWrite())applyRemote(row,true)},getConfirmedState:fetchRemoteState,hasPending,flush:flushRemoteSave,conflict:()=>syncConflict};start();
+  window.fioriOnline={onlineMode:true,canEditGoal,needsGoal,setInitialGoal,getAdjustmentBase:()=>canWrite()&&!hasPending()&&!syncConflict&&confirmedData?clone(confirmedData):null,signOut:async()=>{if(hasPending())throw new Error("Há alterações pendentes; aguarde a confirmação.");lock();await sb.auth.signOut();location.reload()},refresh:async()=>{if(!canWrite())throw new Error("Entre e aguarde a base online.");if(hasPending()||syncConflict)throw new Error("Há alteração pendente ou conflito protegido.");const sequence=loadSequence,row=await fetchRemoteState();if(sequence===loadSequence&&canWrite())applyRemote(row,true)},getConfirmedState:fetchRemoteState,hasPending,flush:flushRemoteSave,conflict:()=>syncConflict};start();
 })();
 </script>
 </body>
