@@ -321,17 +321,19 @@ test('all stock adjustment text is escaped, and module and inventory cache versi
   const d=fixture();d.settings.mountings[0].name='<img src=x onerror=alert(1)>';
   const a=app(d).manual({reason:'<script>alert(1)</script>',direction:'in',color:'<img src=x>'});a.review();
   assert.doesNotMatch(a.node('modal-sheet').innerHTML,/<script>|<img src=x/);assert.match(a.node('modal-sheet').innerHTML,/&lt;script&gt;/);
-  assert.match(html,/stock-adjustment\.js\?v=35/);assert.match(html,/inventory-guard\.js\?v=35/);assert.match(html,/v2026\.10\.11-r8\.6\.2/);
+  assert.match(html,/stock-adjustment\.js\?v=35/);assert.match(html,/inventory-guard\.js\?v=35/);assert.match(html,/v2026\.10\.11-r8\.7\.0/);
 });
 
-for(const kind of ['manual','reset','reverse'])test(`${kind} saves only the raw confirmed base when rendering has created an unsaved current week`,()=>{
+for(const kind of ['manual','reset','reverse'])test(`${kind} saves only the raw confirmed base when a legacy local view has an unsaved current week`,()=>{
   const confirmed=kind==='reverse'?withAdjustment():fixture();
   confirmed.weeks['2026-09-28'].entries=confirmed.weeks[WEEK].entries.map(row=>({...row,date:'2026-10-02'}));
   delete confirmed.weeks[WEEK];
   const rawBefore=JSON.stringify(confirmed),a=app(confirmed);
   a.online.getAdjustmentBase=()=>clone(confirmed);
+  // Simulate a week produced by an older client without committing it online.
+  a.api.getData().weeks[WEEK]={goal:null,modelGoals:{},entries:[],modelSnapshot:clone(confirmed.settings.models),mountingSnapshot:clone(confirmed.settings.mountings)};
   if(kind==='manual')a.manual();else{a.open(kind);a.change('reason','Conferência na nova semana')}
-  assert.ok(a.api.getData().weeks[WEEK],'rendering creates a local current week');
+  assert.ok(a.api.getData().weeks[WEEK],'legacy local draft is present before the correction');
   assert.equal(Object.hasOwn(confirmed.weeks,WEEK),false);
   a.review();assert.equal(a.saved.length,0);assert.equal(JSON.stringify(confirmed),rawBefore);
   a.confirm();assert.equal(a.saved.length,1,a.node('toast').textContent);
@@ -340,7 +342,7 @@ for(const kind of ['manual','reset','reverse'])test(`${kind} saves only the raw 
   assert.deepEqual({...persisted,stockLedger:confirmed.stockLedger},confirmed,'all non-ledger confirmed fields remain byte-for-byte equivalent');
   assert.ok(persisted.stockLedger.length>confirmed.stockLedger.length);
   assert.deepEqual(persisted.stockLedger.slice(0,confirmed.stockLedger.length),confirmed.stockLedger);
-  assert.ok(a.api.getData().weeks[WEEK],'subsequent rendering may recreate the local week');
+  assert.equal(a.api.getData().weeks[WEEK],undefined,'read-only stock rendering does not recreate the local week');
   assert.equal(JSON.stringify(confirmed),rawBefore);
 });
 

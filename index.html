@@ -172,6 +172,10 @@ footer{color:var(--soft);font-size:.78rem;text-align:center;padding:8px 0 24px}
 
 .goal-model-fields{padding:12px 0;border-bottom:1px solid var(--line)}.goal-model-fields>.form-grid{margin-top:8px}.goal-reference-metrics{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin-top:12px}.goal-reference-metrics>div{display:flex;flex-direction:column;gap:3px}.goal-reference-metrics span,.goal-reference-metrics small{font-size:12px;color:var(--muted)}.goal-reference-metrics strong{font-size:18px}.goal-reference-card .sub{margin-bottom:0}@media(min-width:760px){.goal-reference-metrics{grid-template-columns:repeat(4,minmax(0,1fr))}}
 .sheet-editor{margin:18px 0;padding:14px;border:1px solid var(--line);border-radius:14px}.sheet-color-row{margin:12px 0;padding:12px;background:var(--bg);border-radius:10px}.sheet-sizes{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:7px;margin-top:10px}.sheet-sizes .field{margin:0}.sheet-sizes input{padding:10px 5px;text-align:center;min-width:0}.sheet-color-row>.row-top{margin-bottom:6px}.sheet-editor .button-row{flex-wrap:wrap}.unknown-choice{display:flex;gap:8px;align-items:center;font-size:14px;margin:10px 0}.unknown-choice input{width:auto}
+
+/* General dashboard: two concise metrics per row, single column on phones. */
+.general-intro{display:flex;justify-content:space-between;gap:12px;align-items:flex-start;margin:20px 0 10px}.general-intro h2{font-size:1.65rem;margin:2px 0}.general-eyebrow{font-size:.7rem;letter-spacing:.18em;font-weight:750;color:var(--soft)}.general-today{font-size:.78rem;color:var(--soft);padding-top:7px;white-space:nowrap}.general-sync{font-size:.78rem;color:var(--soft);border-left:3px solid var(--live);padding:8px 12px;margin-bottom:18px}.general-block{padding:18px;overflow-wrap:anywhere}.general-title{display:flex;align-items:center;gap:9px;margin-bottom:6px}.general-title h2{margin:0}.general-number{color:var(--bar);background:var(--track);border-radius:6px;padding:4px 6px;font-size:.75rem;font-weight:700}.general-hero{display:flex;align-items:baseline;gap:10px;margin:16px 0 0}.general-hero strong{font-size:2.65rem;font-weight:800;line-height:1.1;font-variant-numeric:tabular-nums}.general-hero span{font-size:.85rem;color:var(--soft)}.general-stats{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin:14px 0}.general-stat{min-width:0;background:var(--bg);padding:12px;border-radius:8px}.general-stat>span,.general-result>span{display:block;font-size:.78rem;color:var(--soft)}.general-stat strong{display:block;font-size:clamp(1rem,4.2vw,1.3rem);line-height:1.3;margin:5px 0;font-variant-numeric:tabular-nums;overflow-wrap:anywhere}.general-stat small,.general-result small{display:block;color:var(--soft);font-size:.73rem}.general-result{background:var(--track);padding:16px;border-radius:8px;margin:14px 0}.general-result strong{display:block;font-size:1.8rem;line-height:1.25;margin:6px 0;font-variant-numeric:tabular-nums}.general-details{border-top:1px solid var(--line);margin-top:10px}.general-details>summary{min-height:48px;padding:12px 0;cursor:pointer;font-size:.85rem;font-weight:650}.general-details[open]>summary{margin-bottom:8px}.general-details>.block{padding:10px}.general-link{min-height:44px;margin-top:8px}.general-filters{display:grid;grid-template-columns:1fr;gap:8px;padding:4px 0 10px}.general-filters input,.general-filters select{width:100%;min-width:0;min-height:44px}.general-filters .field{min-width:0}.general-footnote{margin:18px 4px}.general-block .row-top{flex-wrap:wrap}.general-details summary:focus-visible{outline:3px solid var(--live);outline-offset:2px}@media(min-width:560px){.general-filters{grid-template-columns:1fr 1fr}}@media(max-width:360px){.general-block{padding:12px}.general-stat{padding:9px}.general-today{font-size:.7rem}.general-intro h2{font-size:1.4rem}}
+
 </style>
 
 <style id="remote-sync-style">
@@ -198,7 +202,7 @@ footer{color:var(--soft);font-size:.78rem;text-align:center;padding:8px 0 24px}
   </header>
 
   <nav role="tablist" aria-label="Navegação principal">
-    <button role="tab" aria-selected="true" data-tab="week">Início</button>
+    <button role="tab" aria-selected="true" data-tab="week">Painel</button>
     <button role="tab" aria-selected="false" data-tab="stock">Estoque</button>
     <button role="tab" aria-selected="false" data-tab="expenses">Gastos</button>
     <button role="tab" aria-selected="false" data-tab="sales">Pedidos</button>
@@ -222,7 +226,7 @@ footer{color:var(--soft);font-size:.78rem;text-align:center;padding:8px 0 24px}
     <button class="btn" id="edit-goal" type="button">Editar meta</button>
     <button class="btn primary" id="share" type="button">Compartilhar resumo</button>
   </div>
-  <footer id="app-footer">Base online Fiori Belle · sincronização automática · v2026.10.11-r8.6.2</footer>
+  <footer id="app-footer">Base online Fiori Belle · sincronização automática · v2026.10.11-r8.7.0</footer>
 </div>
 
 <div class="toast" id="toast" hidden role="status" aria-live="polite"></div>
@@ -240,6 +244,7 @@ footer{color:var(--soft);font-size:.78rem;text-align:center;padding:8px 0 24px}
 <script src="assembly-finance.js?v=30"></script>
 <script src="standard-sheet.js?v=33"></script>
 <script src="stock-adjustment.js?v=35"></script>
+<script src="general-dashboard.js?v=36"></script>
 <script>
 "use strict";
 const STORAGE_KEY="acompanhar_producao_v2";
@@ -370,7 +375,7 @@ function ensureWeek(key=currentWeekKey()){
   if(!Array.isArray(w.mountingSnapshot))w.mountingSnapshot=clone(activeMountings());
   return w;
 }
-function weekData(key){return ensureWeek(key)}
+function weekData(key){const w=data.weeks[key]||{};return {...w,goal:w.goal??null,modelGoals:w.modelGoals||{},entries:w.entries||[]}}
 function syncCurrentSnapshots(){
   const w=ensureWeek(currentWeekKey());
   w.modelSnapshot=clone(activeModels());
@@ -606,6 +611,7 @@ function weekDetailsMarkup(w,s,models,mountings,displayState=data){
   </details>`;
 }
 function renderWeek(key=ui.viewWeek||currentWeekKey()){
+  if(key===currentWeekKey()&&typeof FioriGeneral!=="undefined"){try{return renderGeneralDashboard(key)}catch(error){document.getElementById("tab-week").innerHTML='<div class="block"><h2>Painel a conferir</h2><p>Não foi possível calcular estes registros com segurança. Confira os dados nas abas de origem ou recarregue a base online.</p></div>';return}};
   const readOnly=key!==currentWeekKey(),w=weekData(key),s=weekSummary(key),models=modelsForWeek(key),mountings=mountingsForWeek(key);
   const displayState=FioriDashboard.displayStateForWeek(data,w,readOnly);
   const ready=readOnly?null:readyStockForWeek(),issues=ready?.issues||FioriInventory.ledger(data,{until:weekEnd(key)}).issues;
@@ -622,6 +628,72 @@ function renderWeek(key=ui.viewWeek||currentWeekKey()){
   const readyButton=document.getElementById("open-ready-stock");if(readyButton)readyButton.onclick=()=>{switchTab("stock");window.scrollTo({top:0,behavior:"smooth"})};
   document.getElementById("edit-goal").hidden=readOnly;
 }
+function generalSyncMarkup(){
+  const status=window.fioriOnline?.displayStatus?.();
+  if(!status?.ready)return 'Aguardando carregar a base online. Nenhum saldo foi confirmado.';
+  const stamp=value=>value&&Number.isFinite(Date.parse(value))?new Intl.DateTimeFormat('pt-BR',{timeZone:TZ,day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}).format(new Date(value)):null;
+  const checked=stamp(status.loadedAt),updated=stamp(status.updatedAt);
+  return `${status.conflict?'Conflito protegido: confira os dados antes de usar os totais.':status.pending?'Há alterações locais aguardando confirmação online.':'Base online carregada.'}${checked?' Leitura em '+checked+' (São Paulo).':''}${updated?' Última alteração online em '+updated+'.':''} Valores registrados, sujeitos a conferência.`;
+}
+function refreshGeneralSync(){const node=document.getElementById('general-sync');if(node)node.textContent=generalSyncMarkup()}
+function renderGeneralDashboard(key){
+  const root=document.getElementById('tab-week'),today=spDate(),online=window.fioriOnline?.displayStatus?.();
+  document.getElementById('edit-goal').hidden=false;
+  if(!online?.ready){root.innerHTML='<div class="block" id="general-loading"><h2>Painel geral</h2><p id="general-sync" role="status">'+esc(generalSyncMarkup())+'</p></div>';return}
+  const month=ui.dashboardMonth&&ui.dashboardMonth<=today.slice(0,7)?ui.dashboardMonth:today.slice(0,7);
+  const clientId=(data.salesControl?.clients||[]).some(c=>c?.id===ui.dashboardClient)?ui.dashboardClient:'';
+  const view=FioriGeneral.build(data,{today,week:key,month,clientId}),p=view.production,st=view.stock,s=view.sales,f=view.finance,g=view.profit;
+  const currency=value=>value===null||value===undefined?'A conferir':money(value/100),qty=value=>value===null||value===undefined?'A conferir':fmt(value)+' pares';
+  const stat=(label,value,hint='')=>`<div class="general-stat"><span>${esc(label)}</span><strong>${esc(value)}</strong>${hint?`<small>${esc(hint)}</small>`:''}</div>`;
+  const issues=list=>list?.length?`<p class="notice dashboard-alert">${list.map(esc).join(' ')}</p>`:'';
+  const monthLabel=new Intl.DateTimeFormat('pt-BR',{month:'long',year:'numeric',timeZone:TZ}).format(new Date(month+'-02T12:00:00Z'));
+  const currentWeek=data.weeks[key]||{goal:null,modelGoals:{},entries:[]},w={...currentWeek,modelGoals:currentWeek.modelGoals||{}};
+  const weekStats=weekSummary(key),models=modelsForWeek(key),mountings=mountingsForWeek(key);
+  const clientName=id=>s.clients?.find(c=>c.id===id)?.name||'Cliente a conferir';
+  const counts=order=>{const c=order.counts;return [c.pairs?qty(c.pairs):'',c.services?c.services+' item(ns) de serviço/outros':'',c.discounts?c.discounts+' desconto(s)':'',c.review?c.review+' item(ns) a conferir':''].filter(Boolean).join(' · ')||'Sem pares identificados'};
+  root.innerHTML=`<div class="general-intro"><div><span class="general-eyebrow">FIORI BELLE</span><h2>Painel geral</h2><p class="sub">Produção, pedidos e movimentos registrados.</p></div><span class="general-today">${fmtDate(today)}</span></div>
+    <p class="general-sync" id="general-sync" role="status">${esc(generalSyncMarkup())}</p>
+    <section class="block general-block" id="general-production"><div class="general-title"><span class="general-number">01</span><h2>Produção da semana</h2></div><p class="sub">${weekLabel(key)} · até ${fmtDate(p.until,true)}</p>
+      <div class="general-hero"><strong>${p.done===null?'A conferir':fmt(p.done)}</strong><span>pares produzidos</span></div>
+      ${p.done!==null?`<p class="sub">${FioriDashboard.materialUnitsText(p.done,{pairsPerSheet:72})} · equivalência de 72 pares por ficha</p>`:''}
+      <div class="general-stats">${stat('Meta da semana',p.goal===null?'Não definida':qty(p.goal))}${stat('Falta produzir',p.remaining===null?'Sem cálculo':qty(p.remaining))}</div>
+      ${p.goal!==null&&p.done!==null?`<div class="meter-track" role="progressbar" aria-label="Meta semanal" aria-valuemin="0" aria-valuemax="${p.goal}" aria-valuenow="${Math.min(p.goal,p.done)}"><div class="meter-fill" style="width:${barWidth(p.done,p.goal)}%"></div></div><p class="sub">${pct(100*p.done/p.goal)} da meta. Ajustes no estoque não apagam esta produção.</p>`:''}${issues(p.issues)}
+      <details class="general-details"><summary>Ver referências e detalhes da semana</summary>${remainingWeekMarkup(w,weekStats,false,key)}${weekDetailsMarkup(w,weekStats,models,mountings)}</details>
+    </section>
+    <section class="block general-block" id="general-stock"><div class="general-title"><span class="general-number">02</span><h2>Estoque e materiais</h2></div><p class="sub">Saldo registrado até ${fmtDate(today)} · sem reservas para pedidos</p>
+      <div class="general-stats">${stat('Produto pronto',qty(st.ready))}${stat('Cabedal na fábrica',qty(st.factory))}${stat('Cabedal nas montagens',qty(st.mounted))}</div>${issues(st.issues)}
+      <p class="sub">O saldo geral já inclui as montagens. Componentes não são pares de sapatos prontos.</p>
+      <details class="general-details"><summary>Ver referências, materiais e sobras</summary>
+        ${(st.issues.length?[]:st.rows).filter(r=>r.ready||r.factory||r.mounted).map(r=>`<div class="row"><strong>Ref. ${esc(r.ref)}</strong><div class="sub">Pronto: ${qty(r.ready)} · Cabedal na fábrica: ${qty(r.factory)} · Nas montagens: ${qty(r.mounted)}</div></div>`).join('')||'<p class="sub">Sem saldo positivo registrado por referência.</p>'}
+        ${unknownColorNotice(data,today)}${st.issues.length?'<p class="notice">Detalhamento de disponibilidade suspenso até conferir os lançamentos na aba Estoque.</p>':readyStockWeekMarkup()+mountingStockWeekMarkup(weekStats.stockByMounting,mountings,false,data,st.ledger.issues)}
+      </details><button class="btn general-link" type="button" id="general-open-stock">Abrir estoque</button>
+    </section>
+    <div class="general-filters"><div class="field"><label for="general-month">Mês dos pedidos e movimentos</label><input id="general-month" type="month" max="${today.slice(0,7)}" value="${month}"></div><div class="field"><label for="general-client">Cliente · apenas pedidos e resultado</label><select id="general-client"><option value="">Todos os clientes</option>${(s.clients||[]).map(c=>`<option value="${esc(c.id)}"${c.id===clientId?' selected':''}>${esc(c.name)}</option>`).join('')}</select></div></div>
+    <section class="block general-block" id="general-orders"><div class="general-title"><span class="general-number">03</span><h2>Pedidos e clientes</h2></div><p class="sub">${esc(clientId?clientName(clientId):'Todos os clientes')} · ${esc(monthLabel)}</p>
+      ${s.available?`<div class="general-stats">${stat('Pedidos do mês',currency(s.orderCents),'Total salvo dos pedidos ativos')}${stat('A receber hoje',currency(s.receivableCents),'Todos os meses, até '+fmtDate(today))}${stat('Entrega pendente',String(s.pendingDelivery),'Inclui entregas parciais, até hoje')}${stat('Crédito não alocado',currency(s.creditCents),'Separado do saldo dos pedidos')}</div>`:''}${issues(s.issues)}
+      ${s.reviewDelivery?`<p class="notice">${s.reviewDelivery} pedido(s) com entrega a conferir.</p>`:''}
+      <details class="general-details"><summary>Ver pedidos do mês (${s.monthOrders.length})</summary>${s.monthOrders.map(o=>`<article class="row"><div class="row-top"><strong>${esc(clientName(o.clientId))}</strong><span>${fmtDate(o.date,true)}</span></div><p class="sub">${esc(counts(o))}</p><p class="sub">Pagamento: ${s.issues.length?'a conferir':o.balanceCents===0?'pago':o.paidCents>0?'parcial':'em aberto'} · Entrega: ${esc(({pending:'pendente',partial:'parcial, quantidades a conferir',delivered:'entregue'})[o.deliveryStatus]||'a conferir')}</p><strong>${currency(o.totalCents)}</strong><span class="sub"> · saldo ${s.issues.length?'a conferir':currency(o.balanceCents)}</span></article>`).join('')||'<p class="sub">Nenhum pedido ativo registrado neste mês e cliente.</p>'}</details>
+      <p class="sub">Recebimento e entrega são independentes. Cancelados não entram nos totais ativos; serviços e descontos não contam como pares.</p><button class="btn general-link" id="general-open-sales" type="button">Abrir pedidos</button>
+    </section>
+    <section class="block general-block" id="general-finance"><div class="general-title"><span class="general-number">04</span><h2>Entradas e pagamentos</h2></div><p class="sub">${esc(monthLabel)} · fábrica inteira, todos os clientes</p>
+      <div class="general-stats">${stat('Recebido no mês',currency(s.receivedCents),'Data do recebimento')}${stat('Pago pela fábrica',currency(f.cashCents),'Saídas de caixa registradas')}${stat('Retiradas pagas',currency(f.withdrawalsCents),'Só retiradas com situação paga')}${stat('Contas pendentes',currency(f.pendingCents),'Acumulado até '+fmtDate(today))}</div>${issues(f.issues)}
+      <div class="general-result"><span>Movimento registrado do mês</span><strong>${currency(view.movementCents)}</strong><small>Recebido − caixa pago − retiradas pagas</small></div>
+      <p class="sub">Não é saldo disponível: não inclui saldo inicial nem conciliação bancária. Pagamentos comuns usam a data do lançamento; acertos vinculados usam a data do acerto.</p>
+      <details class="general-details"><summary>Ver montagem e critérios do caixa</summary><p>Montagem pendente: <strong>${currency(f.assemblyPendingCents)}</strong>, já incluída nas contas pendentes.</p>${f.legacySettlements?'<p class="notice">Há acerto avulso sem vínculo com produções. Confira os acertos antes de pagar obrigações pendentes; o painel não dá baixa por suposição.</p>':''}<p class="sub">Adiantamento e pagamento líquido entram como caixa. O bruto da obrigação quitada não é somado novamente. Retiradas pendentes não reduzem o movimento do mês.</p></details>
+      <button class="btn general-link" id="general-open-expenses" type="button">Abrir gastos e acertos</button>
+    </section>
+    <section class="block general-block" id="general-profit"><div class="general-title"><span class="general-number">05</span><h2>Resultado estimado</h2></div><p class="sub">Pedidos de ${esc(monthLabel)} · ${esc(clientId?clientName(clientId):'todos os clientes')}</p>
+      <div class="general-result"><span>Lucro bruto estimado ${g.covered<g.total?'· cobertura parcial':''}</span><strong>${g.grossCents===null?'Sem cálculo completo':currency(g.grossCents)}</strong><small>${g.covered} de ${g.total} pedidos com todos os custos calculáveis</small></div>
+      ${g.covered?`<div class="general-stats">${stat('Receita coberta',currency(g.revenueCents),'Somente os pedidos calculados')}${stat('Custo correspondente',currency(g.costCents),'Mesmos pedidos e quantidades')}</div>`:''}
+      <p class="sub">${g.savedOrders} pedido(s) com custo salvo; ${g.catalogOrders} com estimativa pelo catálogo atual. O catálogo atual não comprova o custo histórico.</p>
+      ${g.excluded.length?`<p class="notice">${g.excluded.length} pedido(s), totalizando ${currency(g.excludedCents)}, ficaram fora do cálculo por custos ausentes, serviços, descontos ou dados a conferir.</p><details class="general-details"><summary>Ver pedidos fora do cálculo</summary>${g.excluded.map(o=>`<p class="sub">${esc(clientName(o.clientId))} · ${fmtDate(o.date)}: ${esc(o.reason)}</p>`).join('')}</details>`:''}
+      <p class="sub">Custo ausente nunca é zero. Não é lucro líquido: gastos, compras e montagem não são descontados novamente do custo completo dos produtos.</p>
+    </section><p class="sub general-footnote">Fonte: registros carregados do sistema online. Informações de outros lugares não são somadas automaticamente. Fichas são equivalência de quantidade, não confirmação de cores e numeração.</p>`;
+  document.getElementById('general-month').onchange=e=>{if(ui.tab!=='week'||e.target!==document.getElementById('general-month'))return;const value=e.target.value;if(!/^\d{4}-(0[1-9]|1[0-2])$/.test(value)||value>spDate().slice(0,7)){showToast('Escolha um mês até o atual.');e.target.value=month;return}ui.dashboardMonth=value;renderGeneralDashboard(key)};
+  document.getElementById('general-client').onchange=e=>{if(ui.tab!=='week'||e.target!==document.getElementById('general-client'))return;ui.dashboardClient=e.target.value;renderGeneralDashboard(key)};
+  for(const [id,tab] of [['general-open-stock','stock'],['open-ready-stock','stock'],['general-open-sales','sales'],['general-open-expenses','expenses']]){const button=document.getElementById(id);if(button)button.onclick=()=>{switchTab(tab);window.scrollTo({top:0,behavior:'smooth'})}}
+}
+
 function entriesForDate(date){
   const found=[];for(const [key,w] of Object.entries(data.weeks))for(const e of w.entries||[])if(e.date===date)found.push({...e,weekKey:key});
   return found.sort((a,b)=>String(b.createdAt).localeCompare(String(a.createdAt)));
@@ -1085,7 +1157,7 @@ function shareText(){
     "ACOMPANHAR PRODUÇÃO",`Semana: ${weekLabel(key)}`,`Meta: ${s.goal?fmt(s.goal)+" pares":"não definida"}`,"",
     "COMPONENTES DISPONÍVEIS",...COMPONENTS.map(c=>`${c.name}: ${fmt(s.componentTotals[c.id]||0)} pares`),"",
     "POR MONTAGEM",...s.mountingValues.mountings.map(row=>`${row.name}: ${row.totalPairs===null?'quantidade a conferir':fmt(row.totalPairs)+' pares'} · ${mountingProductionText(row)}`),"Valores estimados não confirmam custo nem saldo a pagar.","",
-    `Pares prontos: ${fmt(s.done)}${s.goal?` · ${pct(s.rate)}`:""}`,"Capacidade e sobras: confira o detalhamento por montagem e linha no Início. Cores, numeração e saldo físico precisam de conferência.",`Projeção: ${fmt(s.projection)} pares no ritmo atual`
+    `Pares prontos: ${fmt(s.done)}${s.goal?` · ${pct(s.rate)}`:""}`,"Capacidade e sobras: confira o detalhamento por montagem e linha no Painel. Cores, numeração e saldo físico precisam de conferência.",`Projeção: ${fmt(s.projection)} pares no ritmo atual`
   ].join("\n");
 }
 async function share(){
@@ -1099,7 +1171,9 @@ function switchTab(tab){
   document.querySelector(".actions").hidden=tab!=="week";render();
 }
 function render(){
-  invalidateMountingRateDialog();invalidateSheetPatternDialog();ensureWeek();
+  invalidateMountingRateDialog();invalidateSheetPatternDialog();
+  if(ui.tab==="week"&&typeof FioriGeneral!=="undefined"&&(!ui.viewWeek||ui.viewWeek===currentWeekKey())){renderWeek();return}
+  ensureWeek();
   if(ui.tab==="week")renderWeek();
   if(ui.tab==="entry")renderEntry();
   if(ui.tab==="history")renderHistory();
@@ -1569,7 +1643,7 @@ if("serviceWorker" in navigator)navigator.serviceWorker.register("sw.js").catch(
 
   const oldRender=render;
   render=function(){
-    invalidateStockAdjustmentDialog();invalidateMountingRateDialog();invalidateSheetPatternDialog();if(ui.tab==="stock"){ensureWeek();renderStock();return}
+    invalidateStockAdjustmentDialog();invalidateMountingRateDialog();invalidateSheetPatternDialog();if(ui.tab==="stock"){renderStock();return}
     oldRender();
   };
 
@@ -1842,7 +1916,7 @@ if("serviceWorker" in navigator)navigator.serviceWorker.register("sw.js").catch(
   }
 
   const previousRender=render;
-  render=function(){invalidateMountingRateDialog();invalidateSheetPatternDialog();if(ui.tab==="expenses"){ensureWeek();renderExpenses();return}previousRender()};
+  render=function(){invalidateMountingRateDialog();invalidateSheetPatternDialog();if(ui.tab==="expenses"){renderExpenses();return}previousRender()};
   switchTab=function(tab){
     ui.tab=tab;
     document.querySelectorAll("nav [role=tab]").forEach(b=>b.setAttribute("aria-selected",b.dataset.tab===tab));
@@ -1994,7 +2068,7 @@ if("serviceWorker" in navigator)navigator.serviceWorker.register("sw.js").catch(
     document.querySelectorAll("[data-sales-receipt]").forEach(b=>b.onclick=()=>{const order=data.salesControl.orders.find(x=>x.id===b.dataset.salesReceipt);if(order)openReceipt(order);else showToast("Pedido não encontrado. Abra a aba Pedidos novamente.")});
   }
   const prevRenderSales=render;
-  render=function(){invalidateMountingRateDialog();invalidateSheetPatternDialog();if(ui.tab==="sales"){ensureWeek();renderSales();return}prevRenderSales()};
+  render=function(){invalidateMountingRateDialog();invalidateSheetPatternDialog();if(ui.tab==="sales"){renderSales();return}prevRenderSales()};
   const prevSwitchSales=switchTab;
   switchTab=function(tab){prevSwitchSales(tab);if(tab==="sales"){["week","stock","expenses","sales","entry","history","settings"].forEach(k=>{const el=document.getElementById("tab-"+k);if(el)el.hidden=k!==tab});renderSales()}};
   document.querySelectorAll('nav [role=tab]').forEach(b=>b.onclick=()=>switchTab(b.dataset.tab));
@@ -2032,6 +2106,7 @@ if("serviceWorker" in navigator)navigator.serviceWorker.register("sw.js").catch(
     closeModal();document.getElementById("remote-auth-msg").textContent="Não foi possível iniciar a conexão. Confira a internet e recarregue a página.";return;
   }
   const sb=window.supabase.createClient(SUPABASE_URL,SUPABASE_KEY,{auth:{persistSession:true,autoRefreshToken:true,detectSessionInUrl:true}});
+  let dashboardLoadedAt=null,dashboardUpdatedAt=null;
   let remoteRevision=0,saveTimer=null,flushPromise=null,applyingRemote=false,realtimeChannel=null,syncConflict=false;
   let authenticated=false,authenticatedUser=null,remoteReady=false,confirmedData=null,loadSequence=0,promptedWeek=null;
   const canWrite=()=>authenticated&&remoteReady;
@@ -2044,7 +2119,7 @@ if("serviceWorker" in navigator)navigator.serviceWorker.register("sw.js").catch(
     else if(goalDialog==="onboarding")closeModal();
   }
   const authRoot=document.getElementById("remote-auth"),authMsg=document.getElementById("remote-auth-msg"),loginForm=document.getElementById("remote-login-form"),activateForm=document.getElementById("remote-activate-form"),firstAccess=document.getElementById("remote-first-access");
-  const setStatus=text=>{const el=document.getElementById("header-status");if(el)el.textContent=text;refreshMountingRateAvailability()};
+  const setStatus=text=>{const el=document.getElementById("header-status");if(el)el.textContent=text;refreshMountingRateAvailability();refreshGeneralSync()};
   const authMessage=(text,error=false)=>{authMsg.textContent=text||"";authMsg.classList.toggle("error",!!error)};
   const unlock=()=>{document.body.classList.remove("remote-lock");authRoot.hidden=true},lock=()=>{
     authenticated=false;authenticatedUser=null;remoteReady=false;confirmedData=null;promptedWeek=null;loadSequence++;clearTimeout(saveTimer);
@@ -2066,12 +2141,12 @@ if("serviceWorker" in navigator)navigator.serviceWorker.register("sw.js").catch(
   function setConflict(localPending,remoteRow,reason){syncConflict=true;localStorage.setItem(CONFLICT_KEY,JSON.stringify({detectedAt:new Date().toISOString(),reason:String(reason||"revision conflict"),local:localPending,remote:{revision:Number(remoteRow?.revision||0),updated_at:remoteRow?.updated_at||null,data:remoteRow?.data||null}}));setStatus("Conflito protegido · não altere até revisar");showModal(`<h2 id="modal-title">Conflito protegido</h2><p>Há uma alteração deste aparelho e outra versão mais nova na base online.</p><p><strong>Nenhum dos dois lados foi apagado.</strong> Não faça novos lançamentos neste aparelho até revisar o conflito.</p><button class="btn primary full" data-modal-close>Entendi</button>`)}
   function applyRemote(row,announce=false){
     if(!row||!row.data||Number(row.revision||0)<remoteRevision||hasPending()||syncConflict)return;
-    if(goalDialog)closeModal();confirmedData=clone(row.data);remoteRevision=Number(row.revision||0);let cacheSaved=true;
+    if(goalDialog)closeModal();dashboardUpdatedAt=row.updated_at||null;confirmedData=clone(row.data);remoteRevision=Number(row.revision||0);let cacheSaved=true;
     applyingRemote=true;
     try{try{localStorage.setItem(STORAGE_KEY,JSON.stringify(row.data))}catch(_){cacheSaved=false}data=loadData(row.data)}finally{applyingRemote=false}
     try{render()}catch(_){}setStatus(cacheSaved?"Base online · sincronizada":"Base online · cache local indisponível");reconcileGoalPrompt();if(announce)showToast("Dados atualizados pela base online.");
   }
-  async function fetchRemoteState(){const {data:row,error}=await sb.from("app_state").select("data,revision,updated_at").eq("workspace_id",WORKSPACE_ID).single();if(error)throw error;if(!row||!row.data||typeof row.data!=="object"||Array.isArray(row.data)||!row.data.weeks||typeof row.data.weeks!=="object"||Array.isArray(row.data.weeks))throw new Error("Base online indisponível");return row}
+  async function fetchRemoteState(){const {data:row,error}=await sb.from("app_state").select("data,revision,updated_at").eq("workspace_id",WORKSPACE_ID).single();if(error)throw error;if(!row||!row.data||typeof row.data!=="object"||Array.isArray(row.data)||!row.data.weeks||typeof row.data.weeks!=="object"||Array.isArray(row.data.weeks))throw new Error("Base online indisponível");dashboardLoadedAt=new Date().toISOString();return row}
   function scheduleFlush(delay=180){clearTimeout(saveTimer);saveTimer=setTimeout(()=>flushRemoteSave(),delay)}
   async function restorePendingOrRemote(row){
     confirmedData=clone(row.data);
@@ -2112,7 +2187,7 @@ if("serviceWorker" in navigator)navigator.serviceWorker.register("sw.js").catch(
       if(sequence!==loadSequence||!authenticated)return false;
       await restorePendingOrRemote(row);
       if(sequence!==loadSequence||!authenticated)return false;
-      remoteReady=true;unlock();refreshMountingRateAvailability();subscribeRealtime();reconcileGoalPrompt();return true;
+      remoteReady=true;unlock();if(ui.tab==="week")renderWeek();refreshGeneralSync();refreshMountingRateAvailability();subscribeRealtime();reconcileGoalPrompt();return true;
     }catch(_){
       if(sequence===loadSequence){lock();authMessage("Não foi possível carregar a base online. Confira a conexão e o acesso da conta e tente entrar novamente.",true)}
       return false;
@@ -2168,7 +2243,7 @@ if("serviceWorker" in navigator)navigator.serviceWorker.register("sw.js").catch(
           break;
         }
         const row=Array.isArray(result)?result[0]:result;
-        remoteRevision=Number(row?.new_revision||remoteRevision+1);confirmedData=clone(sentData);
+        remoteRevision=Number(row?.new_revision||remoteRevision+1);dashboardUpdatedAt=null;confirmedData=clone(sentData);
         const current=readPending();
         if(!current||Number(current.localVersion||0)===sentVersion){
           writePending(null);localStorage.removeItem(CONFLICT_KEY);setStatus("Base online · confirmada");showToast("Alterações confirmadas na base online.");break;
@@ -2240,7 +2315,7 @@ if("serviceWorker" in navigator)navigator.serviceWorker.register("sw.js").catch(
     }catch(_){if(sequence===loadSequence){lock();authMessage("Não foi possível conferir a sessão. Confira a conexão e tente novamente.",true)}}
   }
   sb.auth.onAuthStateChange((event,session)=>{if(!session||(authenticated&&session.user?.id!==authenticatedUser)){lock();setStatus("Entre para acessar a base online")}});
-  window.fioriOnline={onlineMode:true,canEditGoal,needsGoal,setInitialGoal,getAdjustmentBase:()=>canWrite()&&!hasPending()&&!syncConflict&&confirmedData?clone(confirmedData):null,signOut:async()=>{if(hasPending())throw new Error("Há alterações pendentes; aguarde a confirmação.");lock();await sb.auth.signOut();location.reload()},refresh:async()=>{if(!canWrite())throw new Error("Entre e aguarde a base online.");if(hasPending()||syncConflict)throw new Error("Há alteração pendente ou conflito protegido.");const sequence=loadSequence,row=await fetchRemoteState();if(sequence===loadSequence&&canWrite())applyRemote(row,true)},getConfirmedState:fetchRemoteState,hasPending,flush:flushRemoteSave,conflict:()=>syncConflict};start();
+  window.fioriOnline={onlineMode:true,displayStatus:()=>({ready:canWrite(),pending:hasPending(),conflict:syncConflict,loadedAt:dashboardLoadedAt,updatedAt:dashboardUpdatedAt,revision:remoteRevision}),canEditGoal,needsGoal,setInitialGoal,getAdjustmentBase:()=>canWrite()&&!hasPending()&&!syncConflict&&confirmedData?clone(confirmedData):null,signOut:async()=>{if(hasPending())throw new Error("Há alterações pendentes; aguarde a confirmação.");lock();await sb.auth.signOut();location.reload()},refresh:async()=>{if(!canWrite())throw new Error("Entre e aguarde a base online.");if(hasPending()||syncConflict)throw new Error("Há alteração pendente ou conflito protegido.");const sequence=loadSequence,row=await fetchRemoteState();if(sequence===loadSequence&&canWrite())applyRemote(row,true)},getConfirmedState:fetchRemoteState,hasPending,flush:flushRemoteSave,conflict:()=>syncConflict};start();
 })();
 </script>
 </body>
