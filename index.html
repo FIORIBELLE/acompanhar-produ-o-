@@ -226,7 +226,7 @@ footer{color:var(--soft);font-size:.78rem;text-align:center;padding:8px 0 24px}
     <button class="btn" id="edit-goal" type="button">Editar meta</button>
     <button class="btn primary" id="share" type="button">Compartilhar resumo</button>
   </div>
-  <footer id="app-footer">Base online Fiori Belle · sincronização automática · v2026.10.12-r8.7.1</footer>
+  <footer id="app-footer">Base online Fiori Belle · sincronização automática · v2026.10.12-r8.7.2</footer>
 </div>
 
 <div class="toast" id="toast" hidden role="status" aria-live="polite"></div>
@@ -2207,7 +2207,11 @@ if("serviceWorker" in navigator)navigator.serviceWorker.register("sw.js").catch(
       applyRemote(row,true);showToast("A base online mudou. Confira a meta antes de continuar.");return false;
     }
     confirmedData=clone(row.data);
-    ensureWeek(key).goal=goal;data.onboardingDone=true;save();closeModal();render();return true;
+    const before=data,candidate=clone(data);ensureWeek(key,candidate).goal=goal;candidate.onboardingDone=true;
+    data=candidate;let saved=false;
+    try{saved=save()!==false}catch(_){}
+    if(!saved){data=before;showToast("Não foi possível salvar a meta. Os dados anteriores foram preservados.");return false}
+    closeModal();render();return true;
   }
   function subscribeRealtime(){if(realtimeChannel)return;realtimeChannel=sb.channel("fiori-belle-producao-state").on("postgres_changes",{event:"UPDATE",schema:"public",table:"app_state",filter:"workspace_id=eq."+WORKSPACE_ID},payload=>{const row=payload.new;if(!row||!canWrite())return;if(hasPending()||flushPromise||syncConflict){setStatus("Sincronizando · atualização remota aguardando");return}if(Number(row.revision||0)>remoteRevision)applyRemote(row,true)}).subscribe()}
   async function flushRemoteSave(){

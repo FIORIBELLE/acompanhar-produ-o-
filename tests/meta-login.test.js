@@ -168,6 +168,48 @@ test('failed online load never displays a zero-filled general dashboard',async()
 test('new confirmed revision hides outdated server modification time until next read',async()=>{const a=app({session:authenticated});await a.ready();assert.equal(a.online().displayStatus().updatedAt,'2026-10-08T00:00:00Z');a.api.getData().syntheticChange=true;a.api.save();await a.flush();assert.equal(a.online().displayStatus().updatedAt,null);assert.equal(a.rpcs.length,1)});
 
 const NEW_WEEK='2026-10-12',NEW_WEEK_NOW='2026-10-12T15:00:00Z';
+test('Começar rolls back a failed new-week queue save, keeps the form and permits exactly one retry',async()=>{
+ const a=app({session:authenticated,now:NEW_WEEK_NOW});await a.ready();
+ const previous=a.api.getData(),before=clone(previous),cache=a.storage.get(STORAGE),writes=a.writes.length,dialogVersion=a.api.getDialogVersion();
+ a.setWriteErrorKey(PENDING);await a.begin('1008');
+ assert.equal(a.api.getData(),previous);assert.deepEqual(clone(a.api.getData()),before);assert.equal(a.api.getData().weeks[NEW_WEEK],undefined);
+ assert.equal(a.storage.get(STORAGE),cache);assert.equal(a.storage.has(PENDING),false);assert.equal(a.writes.length,writes);
+ assert.equal(a.node('modal').hidden,false);assert.equal(a.api.getGoalDialog(),'onboarding');assert.equal(a.api.getDialogVersion(),dialogVersion);
+ assert.equal(a.node('first-goal').value,'1008');assert.equal(a.node('start-app').disabled,false);assert.match(a.node('toast').textContent,/Não foi possível salvar a meta.*dados anteriores foram preservados/);
+ await a.flush();assert.equal(a.rpcs.length,0);
+ a.setWriteErrorKey(null);const retry=a.begin('1008'),duplicate=a.begin('1008');await Promise.all([retry,duplicate]);
+ const pending=JSON.parse(a.storage.get(PENDING));assert.equal(pending.localVersion,1);assert.equal(pending.data.weeks[NEW_WEEK].goal,1008);
+ assert.equal(a.node('modal').hidden,true);assert.deepEqual(clone(previous),before);await a.flush();
+ assert.equal(a.rpcs.length,1);assert.equal(a.rpcs[0].name,'save_app_state');assert.equal(a.rpcs[0].args.p_expected_revision,39);
+ const next=a.getRemote().data,w=next.weeks[NEW_WEEK];assert.equal(w.goal,1008);assert.deepEqual(w.modelGoals,{});assert.deepEqual(w.entries,[]);assert.equal(w.createdAt,'2026-10-12T15:00:00.000Z');
+ assert.deepEqual(w.modelSnapshot,before.settings.models.filter(m=>m.active!==false));assert.deepEqual(w.mountingSnapshot,before.settings.mountings.filter(m=>m.active!==false));
+ assert.equal(next.onboardingDone,true);delete next.weeks[NEW_WEEK];next.onboardingDone=before.onboardingDone;assert.deepEqual(next,before);assert.equal(a.online().hasPending(),false);
+});
+test('Começar failure preserves an existing week and missing snapshot fields without in-place mutation',async()=>{
+ const remote=row(null);delete remote.data.weeks[WEEK].modelSnapshot;delete remote.data.weeks[WEEK].mountingSnapshot;
+ const a=app({remote,session:authenticated});await a.ready();const previous=a.api.getData(),week=previous.weeks[WEEK],before=clone(previous),cache=a.storage.get(STORAGE);
+ a.setWriteErrorKey(PENDING);await a.begin('1008');await a.flush();
+ assert.equal(a.api.getData(),previous);assert.equal(a.api.getData().weeks[WEEK],week);assert.deepEqual(clone(previous),before);
+ assert.equal(a.storage.get(STORAGE),cache);assert.equal(a.storage.has(PENDING),false);assert.equal(a.rpcs.length,0);assert.equal(a.node('modal').hidden,false);
+ a.setWriteErrorKey(null);await a.begin('1008');await a.flush();assert.equal(a.rpcs.length,1);assert.deepEqual(clone(previous),before);assert.equal(a.getRemote().data.weeks[WEEK].goal,1008);
+});
+test('Começar retains its durable new-week candidate when only the cache fails',async()=>{
+ const a=app({session:authenticated,now:NEW_WEEK_NOW});await a.ready();const previous=a.api.getData(),before=clone(previous),cache=a.storage.get(STORAGE);
+ a.setWriteErrorKey(STORAGE);await a.begin('1008');
+ assert.equal(a.node('modal').hidden,true);assert.equal(a.online().hasPending(),true);assert.equal(a.storage.get(STORAGE),cache);assert.deepEqual(clone(previous),before);
+ assert.equal(a.api.getData().weeks[NEW_WEEK].goal,1008);assert.equal(a.api.getData().onboardingDone,true);
+ assert.equal(JSON.parse(a.storage.get(PENDING)).data.weeks[NEW_WEEK].goal,1008);assert.equal(a.rpcs.length,0);assert.match(a.node('header-status').textContent,/Aguardando confirmação/);
+ a.setWriteErrorKey(null);await a.flush();assert.equal(a.rpcs.length,1);assert.equal(a.getRemote().data.weeks[NEW_WEEK].goal,1008);assert.equal(a.online().hasPending(),false);
+});
+test('Começar invalid input, dismissal and stale callbacks cannot create a week after a failed save',async()=>{
+ const a=app({session:authenticated,now:NEW_WEEK_NOW});await a.ready();const before=clone(a.api.getData()),cache=a.storage.get(STORAGE),writes=a.writes.length,staleClick=a.node('start-app').onclick;
+ for(const value of ['', '0', '-1', '1.5'])await a.begin(value);
+ a.setWriteErrorKey(PENDING);await a.begin('1008');a.setWriteErrorKey(null);
+ const d=deferred();a.setRead(()=>d.promise);const retry=a.begin('1008');await a.ready();a.api.closeModal();a.api.onboarding();
+ d.resolve({data:row(),error:null});await retry;await staleClick();a.api.closeModal();await a.flush();
+ assert.deepEqual(clone(a.api.getData()),before);assert.equal(a.storage.get(STORAGE),cache);assert.equal(a.writes.length,writes);
+ assert.equal(a.storage.has(PENDING),false);assert.equal(a.rpcs.length,0);assert.equal(a.node('modal').hidden,true);
+});
 test('new-week login, goal preview, invalid input and cancel send no CAS or pending state',async()=>{
  const a=app({session:authenticated,now:NEW_WEEK_NOW});await a.ready();
  const before=JSON.stringify(a.api.getData()),writes=a.writes.length;
