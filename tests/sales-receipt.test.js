@@ -9,6 +9,7 @@ const Inventory=require('../inventory-guard');
 const Dashboard=require('../dashboard-view');
 const {state}=require('./fixtures/dashboard-state');
 const {receiptState}=require('./fixtures/receipt-state');
+const {fixedClock}=require('./helpers/fixed-clock');
 const html=fs.readFileSync(path.join(__dirname,'../index.html'),'utf8');
 const scripts=[...html.matchAll(/<script([^>]*)>([\s\S]*?)<\/script>/g)].filter(m=>m[2].trim());
 const build=fixture=>Receipt.build(fixture.orders[0],fixture.clients,fixture.payments);
@@ -21,6 +22,7 @@ function canvas(){
 }
 function app(options={}){
   const fixture={...state(),salesControl:receiptState()},nodes=new Map();
+  const clock=fixedClock(options.now||'2026-10-12T15:00:00Z');
   const node=id=>{
     if(!nodes.has(id)){
       const element={hidden:id==='modal'||['sales-receipt-image','sales-receipt-download','sales-receipt-share-image','sales-receipt-share-text'].includes(id),
@@ -33,7 +35,7 @@ function app(options={}){
   };
   let receiptButtons=[];
   const context=vm.createContext({FioriInventory:Inventory,FioriDashboard:Dashboard,FioriFulfillment:require("../order-fulfillment"),FioriReceipt:Receipt,
-    Date,Intl,console,File,atob,Uint8Array,navigator:options.navigator||{},setTimeout(){},clearTimeout(){},
+    Date:clock.Date,Intl,console,File,atob,Uint8Array,navigator:options.navigator||{},setTimeout(){},clearTimeout(){},
     fetch(){throw new Error('Unexpected network access')},
     localStorage:{getItem:()=>JSON.stringify(fixture),setItem(){throw Error('Unexpected save')}},
     document:{getElementById:node,querySelector:node,createElement:()=>options.createCanvas?options.createCanvas():canvas(),
@@ -165,13 +167,15 @@ test('unsupported or throwing canShare never removes the PNG download',()=>{
     assert.equal(node('sales-receipt-download').hidden,false);assert.equal(node('sales-receipt-share-image').hidden,true);
   }
 });
-test('close/reopen, repeated clicks, tab navigation and updated data never retain another receipt',()=>{
-  const {api,node,click}=app(),before=JSON.stringify(api.getData());click();click();api.closeModal();
+for(const now of ['2026-10-12T02:59:59Z','2026-10-12T03:00:00Z','2026-10-12T15:00:00Z'])test('close/reopen, repeated clicks, tab navigation and updated data never retain another receipt at '+now,()=>{
+  const {api,node,click}=app({now}),before=JSON.stringify(api.getData());click();click();api.closeModal();
   assert.equal(node('modal').hidden,true);api.switchTab('week');api.switchTab('sales');click('order-test-b');
   assert.match(node('sales-receipt-text').value,/Cliente de teste B/);assert.doesNotMatch(node('sales-receipt-text').value,/TESTE-01/);
   api.closeModal();assert.equal(JSON.stringify(api.getData()),before);
-  const next=JSON.parse(before);next.salesControl.clients[0].name='Nome atualizado';api.replaceData(next);click();
+  const next=JSON.parse(before);next.salesControl.clients[0].name='Nome atualizado';const nextBefore=JSON.stringify(next);api.replaceData(next);click();
   assert.match(node('sales-receipt-text').value,/Nome atualizado/);
+  assert.equal(JSON.stringify(api.getData()),nextBefore);
+  assert.equal(api.getData().weeks['2026-10-12'],undefined);
 });
 test('malformed price surfaces an explicit error instead of an unhandled click exception',()=>{
   const {api,node,click}=app();delete api.getData().salesControl.orders[0].items[0].unitPriceCents;
