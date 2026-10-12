@@ -20,13 +20,13 @@ function app({remote=row(),local=null,session=null,pending=null,readError=null,m
  async rpc(name,args){rpcs.push({name,args:clone(args)});if(rpcOverride)return rpcOverride(name,args);if(args.p_expected_revision!==remote.revision)return{data:null,error:{message:'revision conflict'}};remote={data:clone(args.p_data),revision:remote.revision+1};return{data:[{new_revision:remote.revision}],error:null}}};
  const clock=fixedClock(now);
  const window={scrollTo(){},addEventListener(name,fn){events.set(name,fn)},...(missingSdk?{}:{supabase:{createClient:()=>sb}})};
- const context=vm.createContext({FioriGeneral:require('../general-dashboard'),FioriAssembly:require('../assembly-finance'),FioriInventory:require('../inventory-guard'),FioriDashboard:require('../dashboard-view'),FioriFinance:require('../finance-preview'),FioriFulfillment:require('../order-fulfillment'),Date:clock.Date,Intl,console,navigator:{onLine:true},
+ const context=vm.createContext({FioriMaterials:require('../material-catalog'),FioriGeneral:require('../general-dashboard'),FioriAssembly:require('../assembly-finance'),FioriInventory:require('../inventory-guard'),FioriDashboard:require('../dashboard-view'),FioriFinance:require('../finance-preview'),FioriFulfillment:require('../order-fulfillment'),Date:clock.Date,Intl,console,navigator:{onLine:true},
  setTimeout(fn,delay){timers.set(++timerId,{fn,delay});return timerId},clearTimeout(id){timers.delete(id)},
  localStorage:{getItem:key=>storage.get(key)??null,setItem(key,value){if(key===writeErrorKey)throw new Error("Synthetic quota exceeded");storage.set(key,String(value));writes.push({key,value:String(value)})},removeItem(key){storage.delete(key)}},
- document:{body,getElementById:node,querySelector:node,querySelectorAll(selector){if(selector==='[data-define-rate]')return ['a','b','empty'].map(id=>{const button=node('rate-button-'+id);button.dataset={defineRate:id};return button});return[]}},window,location:{reload(){}}});
+ document:{body,getElementById:node,querySelector:node,querySelectorAll(selector){if(selector==='[data-define-rate]')return ['a','b','empty'].map(id=>{const button=node('rate-button-'+id);button.dataset={defineRate:id};return button});if(selector==='[data-material-price]')return [node('synthetic-price-button')];return[]}},window,location:{reload(){}}});
  const main=scripts[0][2].slice(0,scripts[0][2].lastIndexOf('\ndocument.querySelectorAll("nav [role=tab]").forEach'));
  vm.runInContext(main,context);for(const script of scripts.slice(1).filter(m=>!m[1].includes('remote-sync-v2')))vm.runInContext(script[2],context);
- vm.runInContext('render();globalThis.testApi={settings:()=>switchTab("settings"),openRate:()=>openMountingRate("a"),getData:()=>data,persist:next=>persistCandidate(next),save:()=>save(),onboarding:()=>onboarding(),goalModal:()=>goalModal(),closeModal:()=>closeModal(),showModal:(text)=>showModal(text),getGoalDialog:()=>goalDialog,getDialogVersion:()=>goalDialogVersion,ensureWeek:(key)=>ensureWeek(key)}',context);
+ vm.runInContext('render();globalThis.testApi={settings:()=>switchTab("settings"),openRate:()=>openMountingRate("a"),openMaterial,materialAttempt:()=>materialAttempt,getData:()=>data,persist:next=>persistCandidate(next),save:()=>save(),onboarding:()=>onboarding(),goalModal:()=>goalModal(),closeModal:()=>closeModal(),showModal:(text)=>showModal(text),getGoalDialog:()=>goalDialog,getDialogVersion:()=>goalDialogVersion,ensureWeek:(key)=>ensureWeek(key)}',context);
  vm.runInContext(scripts.find(m=>m[1].includes('remote-sync-v2'))[2],context);
  return{api:context.testApi,node,storage,writes,rpcs,timers,body,clock,online:()=>window.fioriOnline,getRemote:()=>clone(remote),getReads:()=>reads,
  async ready(){await tick();await tick()},async login(){node('remote-email').value='synthetic@example.invalid';node('remote-password').value='synthetic-password';await node('remote-login-form').onsubmit({preventDefault(){}});await tick()},
@@ -233,4 +233,62 @@ test('goal opened before the Sao Paulo week boundary cannot create the old or ne
  const remote=row();delete remote.data.weeks[WEEK];const a=app({remote,session:authenticated,now:'2026-10-12T02:59:59Z'});await a.ready();a.api.closeModal();a.api.goalModal();fillGoal(a);const before=JSON.stringify(a.api.getData());
  a.clock.set('2026-10-12T03:00:00Z');a.node('save-goal').onclick();await a.flush();
  assert.equal(JSON.stringify(a.api.getData()),before);assert.equal(a.api.getData().weeks[WEEK],undefined);assert.equal(a.api.getData().weeks[NEW_WEEK],undefined);assert.equal(a.rpcs.length,0);
+});
+
+// Stage 1: only synthetic catalog records travel through the existing queue/CAS.
+function syntheticMaterialRow(){const remote=row();remote.data.settings.materials=[{id:'synthetic-material-cas',name:'Material fictício CAS',category:'outro',unit:'un',supplier:'Fornecedor sintético',variantByColor:false,active:true,prices:[{id:'synthetic-price-before',from:'2026-10-01',unitPriceMills:1234,note:'Teste sintético'}],createdAt:'2026-10-01T12:00:00Z',updatedAt:'2026-10-01T12:00:00Z'}];return remote}
+function reviewSyntheticMaterial(a,kind){
+ a.api.settings();a.api.openMaterial(kind,kind==='price'?'synthetic-material-cas':null);
+ if(kind==='new'){for(const [key,value] of [['name','Material adicional fictício'],['category','embalagem'],['unit','un'],['supplier','Fornecedor de teste']])a.node('material-'+key).value=value;a.node('material-color').checked=false}
+ else{a.node('material-price-date').value='2026-10-07';a.node('material-price-value').value='2,345';a.node('material-price-note').value='Vigência sintética CAS'}
+ a.node('material-form').onsubmit({preventDefault(){}});return a.node('material-confirm').onclick;
+}
+for(const kind of ['new','price'])for(const mode of ['success','pending-quota','cache-quota','conflict','lost-response','guard-reject'])test(`material ${kind} CAS ${mode} preserves append-only state and confirmation semantics`,async()=>{
+ const initial=syntheticMaterialRow(),a=app({remote:initial,session:authenticated});await a.ready();
+ const before=clone(a.api.getData()),confirm=reviewSyntheticMaterial(a,kind),id=a.api.materialAttempt().id;
+ if(mode==='pending-quota')a.setWriteErrorKey(PENDING);
+ if(mode==='cache-quota')a.setWriteErrorKey(STORAGE);
+ confirm();confirm();
+ if(mode==='pending-quota'){
+   assert.deepEqual(clone(a.api.getData()),before);assert.equal(a.online().hasPending(),false);assert.equal(a.api.materialAttempt().id,id);assert.equal(a.api.materialAttempt().phase,'form');await a.flush();assert.equal(a.rpcs.length,0);return;
+ }
+ assert.equal(a.online().hasPending(),true);assert.equal(a.node('new-material').disabled,true);assert.equal(a.node('synthetic-price-button').disabled,true);
+ const pending=JSON.parse(a.storage.get(PENDING));assert.equal(pending.baseRevision,39);assert.equal(pending.hydrated,true);
+ const candidate=pending.data;assert.deepEqual(candidate.weeks,before.weeks);assert.deepEqual(candidate.stockLedger,before.stockLedger);assert.deepEqual(candidate.factoryExpenses,before.factoryExpenses);assert.deepEqual(candidate.settings.mountingRateHistory,before.settings.mountingRateHistory);
+ if(kind==='new'){assert.equal(candidate.settings.materials.length,2);assert.equal(candidate.settings.materials[1].id,id);assert.deepEqual(candidate.settings.materials[1].prices,[]);assert.deepEqual(candidate.settings.materials[0],before.settings.materials[0])}
+ else{assert.equal(candidate.settings.materials[0].prices.length,2);assert.equal(candidate.settings.materials[0].prices[1].id,id);assert.equal(candidate.settings.materials[0].prices[1].unitPriceMills,2345);assert.deepEqual(candidate.settings.materials[0].prices[0],before.settings.materials[0].prices[0])}
+ if(mode==='conflict'){const newer=clone(initial);newer.revision=40;newer.data.syntheticConcurrentUpdate=true;a.setRemote(newer)}
+ if(mode==='guard-reject')a.setRpc(()=>({data:null,error:{code:'23514',message:'Synthetic backend refusal'}}));
+ if(mode==='lost-response')a.setRpc((_name,args)=>{a.setRemote({data:clone(args.p_data),revision:40});throw Error('Synthetic response lost after commit')});
+ await a.flush();
+ if(mode==='lost-response'){assert.equal(a.online().hasPending(),true);a.setRpc(null);await a.flush()}
+ assert.equal(a.rpcs.length,1);assert.equal(a.rpcs[0].name,'save_app_state');assert.equal(a.rpcs[0].args.p_expected_revision,39);assert.deepEqual(a.rpcs[0].args.p_data,candidate);
+ if(mode==='conflict'||mode==='guard-reject'){
+   assert.equal(a.online().hasPending(),true);assert.equal(a.node('new-material').disabled,true);assert.deepEqual(a.getRemote().data.settings.materials,initial.data.settings.materials);assert.deepEqual(JSON.parse(a.storage.get(PENDING)).data,candidate);if(mode==='conflict')assert.equal(a.online().conflict(),true);
+ }else{
+   assert.equal(a.online().hasPending(),false);assert.equal(a.node('new-material').disabled,false);assert.equal(a.node('synthetic-price-button').disabled,false);assert.deepEqual(a.getRemote().data.settings.materials,candidate.settings.materials);
+ }
+});
+test('remote catalog refresh closes stale material review without writing and retains incoming rows',async()=>{const a=app({remote:syntheticMaterialRow(),session:authenticated});await a.ready();const callback=reviewSyntheticMaterial(a,'price'),newer=syntheticMaterialRow();newer.revision=40;newer.data.settings.materials[0].prices.push({id:'synthetic-remote-price',from:'2026-10-07',unitPriceMills:3456,note:'Teste remoto'});a.emit(newer);assert.equal(a.node('modal').hidden,true);callback();await a.flush();assert.equal(a.rpcs.length,0);assert.deepEqual(clone(a.api.getData().settings.materials),newer.data.settings.materials)});
+test('losing authentication cancels pending material confirmation without queueing it',async()=>{const a=app({remote:syntheticMaterialRow(),session:authenticated});await a.ready();const callback=reviewSyntheticMaterial(a,'new'),before=clone(a.api.getData());a.signOut();callback();await a.flush();assert.equal(a.rpcs.length,0);assert.deepEqual(clone(a.api.getData()),before);assert.equal(a.online().hasPending(),false)});
+test('online hydration and repeated material lookup never add absent collection or issue CAS',async()=>{const initial=row(),a=app({remote:initial,session:authenticated});await a.ready();for(let i=0;i<3;i++){a.api.settings();a.api.openMaterial('new');a.api.closeModal()}await a.flush();assert.equal(a.rpcs.length,0);assert.equal(Object.hasOwn(a.api.getData().settings,'materials'),false);assert.equal(Object.hasOwn(a.getRemote().data.settings,'materials'),false)});
+for(const kind of ['new','price'])test(`material ${kind} CAS preserves raw confirmed JSON including unknown fields and absent defaults`,async()=>{
+ const initial=syntheticMaterialRow();
+ initial.data.settings.models[0].syntheticMetadata={preserve:true};initial.data.settings.mountings[0].syntheticMetadata={preserve:'mounting'};
+ delete initial.data.settings.models[0].cabedalCost;delete initial.data.settings.models[0].totalCost;delete initial.data.settings.models[0].usesPalmilha;
+ delete initial.data.settings.workDays;initial.data.weeks={};initial.data.onboardingDone=true;
+ initial.data.syntheticTopLevel={preserve:['all','data']};
+ const a=app({remote:initial,session:authenticated,now:'2026-10-13T01:00:00Z'});await a.ready();a.api.closeModal();
+ const confirm=reviewSyntheticMaterial(a,kind);confirm();await a.flush();
+ assert.equal(a.rpcs.length,1);const saved=clone(a.rpcs[0].args.p_data);saved.settings.materials=initial.data.settings.materials;
+ assert.deepEqual(saved,initial.data);assert.equal(a.online().hasPending(),false);assert.deepEqual(clone(a.api.getData().weeks),{});
+});
+for(const [point,change] of [['open','missing'],['review','missing'],['review','changed'],['confirm','missing'],['confirm','changed']])test(`material confirmed base ${change} at ${point} blocks persistence`,async()=>{
+ const a=app({remote:syntheticMaterialRow(),session:authenticated});await a.ready();a.api.settings();const original=a.online().getAdjustmentBase;
+ const invalidate=()=>{a.online().getAdjustmentBase=change==='missing'?()=>null:()=>({...original(),syntheticBaseChange:true})};
+ if(point==='open'){a.online().getAdjustmentBase=()=>null;a.api.openMaterial('new');assert.equal(a.api.materialAttempt(),null)}
+ else if(point==='review'){
+   a.api.openMaterial('new');a.node('material-name').value='Material fictício';a.node('material-category').value='outro';a.node('material-unit').value='un';a.node('material-supplier').value='';invalidate();a.node('material-form').onsubmit({preventDefault(){}});
+ }else{const confirm=reviewSyntheticMaterial(a,'price');invalidate();confirm()}
+ await a.flush();assert.equal(a.rpcs.length,0);assert.equal(a.online().hasPending(),false);assert.deepEqual(a.getRemote().data.settings.materials,syntheticMaterialRow().data.settings.materials);
 });

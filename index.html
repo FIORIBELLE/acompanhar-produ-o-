@@ -104,6 +104,7 @@ footer{color:var(--soft);font-size:.78rem;text-align:center;padding:8px 0 24px}
 @media(display-mode:standalone){.install-help{display:none}}
 
 .mounting-item{grid-template-columns:minmax(0,1fr) auto}.mounting-rate-card{padding:12px 0;border-top:1px solid var(--line)}.mounting-rate-card:first-child{border-top:0}.mounting-current-rate{margin:8px 0}.mounting-current-rate .sub{margin-top:3px}.mounting-rate-history{margin-top:10px}.mounting-rate-history>summary{cursor:pointer;min-height:44px;align-content:center;font-size:.9rem}.mounting-rate-history>summary:focus-visible{outline:3px solid var(--live);outline-offset:2px}.mounting-rate-history ol{padding-left:22px;font-size:.85rem}.mounting-rate-history li{padding:5px 0}.mounting-rate-card .sub{overflow-wrap:anywhere}button:disabled{cursor:not-allowed;opacity:.6}
+.material-category{margin-top:18px}.material-category h3{font-size:1rem;margin:0 0 8px}.material-card{padding:14px 0;border-top:1px solid var(--line);overflow-wrap:anywhere;min-width:0}.material-card h4{font-size:1rem;margin:0 0 5px}.material-card .btn{min-height:44px;max-width:100%;white-space:normal}.material-color-option{display:flex;gap:10px;align-items:center;min-height:44px;margin:10px 0}.material-color-option input{width:20px;height:20px;flex:none}
 /* STOCK_PANEL_V1 */
 .stock-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px}
 .stock-sector-card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:13px}
@@ -226,7 +227,7 @@ footer{color:var(--soft);font-size:.78rem;text-align:center;padding:8px 0 24px}
     <button class="btn" id="edit-goal" type="button">Editar meta</button>
     <button class="btn primary" id="share" type="button">Compartilhar resumo</button>
   </div>
-  <footer id="app-footer">Base online Fiori Belle · sincronização automática · v2026.10.12-r8.7.2</footer>
+  <footer id="app-footer">Base online Fiori Belle · sincronização automática · v2026.10.12-r8.8.0</footer>
 </div>
 
 <div class="toast" id="toast" hidden role="status" aria-live="polite"></div>
@@ -245,6 +246,7 @@ footer{color:var(--soft);font-size:.78rem;text-align:center;padding:8px 0 24px}
 <script src="standard-sheet.js?v=33"></script>
 <script src="stock-adjustment.js?v=35"></script>
 <script src="general-dashboard.js?v=36"></script>
+<script src="material-catalog.js?v=39"></script>
 <script>
 "use strict";
 const STORAGE_KEY="acompanhar_producao_v2";
@@ -272,7 +274,7 @@ const DEFAULTS={
 let data=loadData();
 let ui={tab:"week",viewWeek:null,editingEntry:null};
 let toastTimer=null,goalDialog=null,goalDialogVersion=0;
-let mountingRateAttempt=null,mountingSettingsGeneration=0;
+let mountingRateAttempt=null,mountingSettingsGeneration=0,materialAttempt=null;
 
 function clone(v){return JSON.parse(JSON.stringify(v))}
 function loadData(source){
@@ -455,8 +457,8 @@ function fichasText(pairs){
 function showToast(message){
   const el=document.getElementById("toast");el.textContent=message;el.hidden=false;clearTimeout(toastTimer);toastTimer=setTimeout(()=>el.hidden=true,2600);
 }
-function showModal(html,kind=null){if(kind!=="mounting-rate")mountingRateAttempt=null;goalDialog=kind;goalDialogVersion++;document.getElementById("modal-sheet").innerHTML=html;document.getElementById("modal").hidden=false}
-function closeModal(){const returnFocus=mountingRateAttempt?.returnFocus;mountingRateAttempt=null;goalDialog=null;goalDialogVersion++;document.getElementById("modal").hidden=true;document.getElementById("modal-sheet").innerHTML="";if(returnFocus?.isConnected)returnFocus.focus?.()}
+function showModal(html,kind=null){if(kind!=="material")materialAttempt=null;if(kind!=="mounting-rate")mountingRateAttempt=null;goalDialog=kind;goalDialogVersion++;document.getElementById("modal-sheet").innerHTML=html;document.getElementById("modal").hidden=false}
+function closeModal(){const returnFocus=materialAttempt?.returnFocus||mountingRateAttempt?.returnFocus;materialAttempt=null;mountingRateAttempt=null;goalDialog=null;goalDialogVersion++;document.getElementById("modal").hidden=true;document.getElementById("modal-sheet").innerHTML="";if(returnFocus?.isConnected)returnFocus.focus?.()}
 function invalidateMountingRateDialog(){if(mountingRateAttempt)closeModal()}
 function confirmAction({title,message,confirmText="Confirmar",danger=false,onConfirm}){
   showModal(`<h2 id="modal-title">${esc(title)}</h2><p>${esc(message)}</p><div class="button-row"><button class="btn" data-modal-close>Cancelar</button><button class="btn ${danger?"danger":"primary"}" id="modal-confirm">${esc(confirmText)}</button></div>`);
@@ -942,6 +944,115 @@ function mountingSettingsItem(item,index,total,inactive=false){
   catch(error){current=`<strong>Sem tarifa aplicável hoje</strong><div class="sub">${esc(typeof FioriAssembly==="undefined"?'Recarregue o app para carregar as tarifas.':error.message)}</div>`}
   return `<article class="mounting-rate-card"><div class="setting-item mounting-item">${inactive?`<strong>${esc(item.name)} · inativa</strong>`:`<input value="${esc(item.name)}" data-name-id="${esc(item.id)}" data-type="mountings" aria-label="Nome da montagem"><div class="mini-actions"><button data-move="up" data-id="${esc(item.id)}" data-type="mountings" ${index===0?"disabled":""} aria-label="Mover para cima">↑</button><button data-move="down" data-id="${esc(item.id)}" data-type="mountings" ${index===total-1?"disabled":""} aria-label="Mover para baixo">↓</button><button class="remove" data-remove="${esc(item.id)}" data-type="mountings" aria-label="Remover">×</button></div>`}</div><div class="mounting-current-rate">${current}</div>${inactive?'':`<button class="btn small" type="button" data-define-rate="${esc(item.id)}" ${assemblyBusy()||typeof FioriAssembly==="undefined"?'disabled':''}>Definir nova vigência</button>`}${mountingRateHistoryMarkup(item)}</article>`;
 }
+function materialCatalogIssue(){
+  if(typeof FioriMaterials==="undefined")return "Recarregue o app para carregar o catálogo de materiais.";
+  return FioriMaterials.validateCatalog(data)[0]?.message||"";
+}
+function materialPriceText(mills){return "R$ "+FioriMaterials.formatPriceMills(mills)}
+function materialHistoryMarkup(item){
+  if(!Array.isArray(item.prices))return '<p class="notice">Histórico inválido. Solicite conferência.</p>';
+  const rows=item.prices.slice().sort((a,b)=>String(a?.from).localeCompare(String(b?.from))),today=spDate();
+  return `<details class="mounting-rate-history"><summary>Histórico de preços (${rows.length})</summary>${rows.length?`<ol>${rows.map((price,index)=>{
+    if(!price||!FioriMaterials.validDate(price.from)||!Number.isSafeInteger(price.unitPriceMills)||price.unitPriceMills<0)return '<li>Registro inválido. Solicite conferência.</li>';
+    const next=rows[index+1],until=next&&FioriMaterials.validDate(next.from)?` até ${fmtDate(addDays(next.from,-1))}`:' em diante';
+    return `<li><strong>${esc(materialPriceText(price.unitPriceMills))} / ${esc(item.unit)}</strong><br>De ${fmtDate(price.from)}${until}${price.from>today?' · futuro':''}${price.note?`<br>${esc(price.note)}`:''}</li>`;
+  }).join("")}</ol>`:'<p class="sub">Nenhum preço cadastrado. Valor a conferir.</p>'}<p class="sub">Somente leitura. Preços confirmados não podem ser editados ou apagados.</p></details>`;
+}
+function materialCard(item,blocked){
+  let current='<strong>A conferir · sem preço aplicável hoje</strong>';
+  try{const price=FioriMaterials.applicablePrice(item,spDate());if(price)current=`<strong>${esc(materialPriceText(price.unitPriceMills))} / ${esc(item.unit)} hoje</strong><div class="sub">Preço desde ${fmtDate(price.from)}</div>`}catch(_){current='<strong>A conferir · cadastro ou histórico inválido</strong>'}
+  return `<article class="material-card"><h4>${esc(item.name||'Material a conferir')}${item.active===false?' · inativo':''}</h4><p class="sub">Unidade: ${esc(item.unit||'a conferir')}${item.supplier?` · Fornecedor: ${esc(item.supplier)}`:''}${item.variantByColor?' · Varia por cor':''}</p><div class="mounting-current-rate">${current}</div>${item.active===true?`<button class="btn small" type="button" data-material-price="${esc(item.id)}" ${blocked?'disabled':''}>Definir novo preço</button>`:'<p class="sub">Cadastro somente leitura.</p>'}${materialHistoryMarkup(item)}</article>`;
+}
+function materialsSettingsMarkup(){
+  const issue=materialCatalogIssue(),busy=assemblyBusy(),raw=data.settings.materials,items=Array.isArray(raw)?raw.filter(item=>item&&typeof item==='object'&&!Array.isArray(item)):[];
+  const categories=typeof FioriMaterials==="undefined"?[]:FioriMaterials.categories;
+  const groups=typeof FioriMaterials==="undefined"?"": [...categories,{id:'unknown',label:'A conferir'}].map(category=>{
+    const rows=items.filter(item=>category.id==='unknown'?!categories.some(c=>c.id===item.category):item.category===category.id).slice().sort((a,b)=>String(a.name).localeCompare(String(b.name),'pt-BR'));
+    return rows.length?`<section class="material-category"><h3>${esc(category.label)}</h3>${rows.map(item=>materialCard(item,!!issue||busy)).join('')}</section>`:'';
+  }).join('');
+  return `<div class="block" id="materials-catalog"><h2>Materiais</h2><p class="sub">Catálogo por categoria, unidade e fornecedor. Os preços têm data de início e preservam o histórico, com até três casas decimais.</p>${issue?`<p class="notice" role="alert">${esc(issue)}</p>`:groups||'<p class="empty">Nenhum material cadastrado.</p>'}<p class="notice" id="material-online-warning" role="status" ${busy?'':'hidden'}>Aguarde a confirmação da base online ou resolva o conflito antes de cadastrar.</p><button class="btn full" type="button" id="new-material" ${issue||busy?'disabled':''}>Novo material</button></div>`;
+}
+function refreshMaterialAvailability(){
+  if(ui.tab!=="settings")return;
+  const busy=assemblyBusy(),blocked=busy||!!materialCatalogIssue(),add=document.getElementById("new-material");
+  if(add)add.disabled=blocked;
+  document.querySelectorAll("[data-material-price]").forEach(button=>button.disabled=blocked);
+  const notice=document.getElementById("material-online-warning");if(notice)notice.hidden=!busy;
+}
+function invalidateMaterialDialog(){if(materialAttempt)closeModal()}
+function materialIsCurrent(attempt,version){return materialAttempt===attempt&&ui.tab==="settings"&&attempt.generation===mountingSettingsGeneration&&version===goalDialogVersion&&!document.getElementById("modal").hidden}
+function materialConfirmedBase(){
+  const online=window.fioriOnline;
+  if(online?.onlineMode){try{return online.getAdjustmentBase?.()||null}catch(_){return null}}
+  return clone(data);
+}
+function materialReady(attempt){
+  if(assemblyBusy()||JSON.stringify(data)!==attempt.fingerprint){closeModal();showToast("Os dados mudaram. Aguarde a base online e abra o cadastro novamente.");return false}
+  const confirmed=materialConfirmedBase();
+  if(!confirmed||JSON.stringify(confirmed)!==attempt.baseFingerprint){closeModal();showToast("A base online mudou ou ainda não foi confirmada. Aguarde e reabra o cadastro.");return false}
+  return true;
+}
+function openMaterial(mode,materialId=null,returnFocus=null){
+  if(ui.tab!=="settings")return;
+  if(assemblyBusy()){showToast("Aguarde a confirmação da base online ou resolva o conflito antes de cadastrar.");return}
+  const issue=materialCatalogIssue();if(issue){showToast(issue);return}
+  // Build only from the raw confirmed JSON. loadData normalizations are display-only.
+  const base=materialConfirmedBase();if(!base){showToast("Aguarde a base online confirmar os dados antes de abrir o cadastro.");return}
+  const baseIssue=FioriMaterials.validateCatalog(base)[0];if(baseIssue){showToast(baseIssue.message);return}
+  const item=mode==="price"?FioriMaterials.listMaterials(base).find(item=>item.id===materialId&&item.active===true):null;
+  if(mode!=="new"&&(mode!=="price"||!item))return;
+  const attempt={mode,id:uid(mode==="new"?"material":"preco"),materialId,name:item?.name||"",unit:item?.unit||"",category:"",supplier:"",variantByColor:false,date:spDate(),value:"",note:"",createdAt:new Date().toISOString(),base,baseFingerprint:JSON.stringify(base),fingerprint:JSON.stringify(data),generation:mountingSettingsGeneration,returnFocus,phase:"form"};
+  materialForm(attempt);
+}
+function materialInput(attempt){
+  if(attempt.mode==="new"){
+    const input={id:attempt.id,name:attempt.name,category:attempt.category,unit:attempt.unit,supplier:attempt.supplier,variantByColor:attempt.variantByColor,active:true,createdAt:attempt.createdAt,updatedAt:attempt.createdAt};
+    FioriMaterials.addMaterial(attempt.base,input);return input;
+  }
+  const input={id:attempt.id,from:attempt.date,unitPriceMills:FioriMaterials.parsePriceMills(attempt.value),note:attempt.note,updatedAt:attempt.createdAt};
+  FioriMaterials.addPrice(attempt.base,attempt.materialId,input);return input;
+}
+function materialPricePreview(attempt,input){
+  const item=FioriMaterials.listMaterials(attempt.base).find(item=>item.id===attempt.materialId),next=item.prices.filter(price=>price.from>input.from).slice().sort((a,b)=>a.from.localeCompare(b.from))[0];
+  return `${materialPriceText(input.unitPriceMills)} / ${attempt.unit}, de ${fmtDate(input.from)}${next?` até ${fmtDate(addDays(next.from,-1))}`:' em diante'}.${input.from>spDate()?' Preço futuro.':''}${input.unitPriceMills===0?' Preço zero informado explicitamente.':''}`;
+}
+function materialForm(attempt,errorMessage=""){
+  attempt.phase="form";materialAttempt=attempt;
+  const isNew=attempt.mode==="new";
+  const fields=isNew?`<div class="field"><label for="material-name">Nome do material</label><input id="material-name" required autocomplete="off" maxlength="200" value="${esc(attempt.name)}"></div><div class="form-grid"><div class="field"><label for="material-category">Categoria</label><select id="material-category" required><option value="">Escolha a categoria</option>${FioriMaterials.categories.map(category=>`<option value="${category.id}">${esc(category.label)}</option>`).join('')}</select></div><div class="field"><label for="material-unit">Unidade</label><select id="material-unit" required><option value="">Escolha a unidade</option>${FioriMaterials.units.map(unit=>`<option value="${unit}">${unit}</option>`).join('')}</select></div></div><div class="field"><label for="material-supplier">Fornecedor (opcional)</label><input id="material-supplier" autocomplete="off" maxlength="200" value="${esc(attempt.supplier)}"></div><label class="material-color-option"><input id="material-color" type="checkbox" ${attempt.variantByColor?'checked':''}> Varia por cor</label><p class="sub">O material será criado sem preço. Depois, use Definir novo preço para registrar uma vigência.</p>`:`<div class="field"><label for="material-price-date">Data inicial do preço</label><input id="material-price-date" type="date" required value="${esc(attempt.date)}"></div><div class="field"><label for="material-price-value">Preço por ${esc(attempt.unit)} (R$)</label><input id="material-price-value" inputmode="decimal" autocomplete="off" required value="${esc(attempt.value)}" placeholder="0,000" aria-describedby="material-price-help material-price-preview"></div><p class="sub" id="material-price-help">Até três casas decimais, sem separador de milhares. Zero é aceito quando informado.</p><div class="field"><label for="material-price-note">Observação (opcional)</label><input id="material-price-note" autocomplete="off" maxlength="500" value="${esc(attempt.note)}"></div><div class="calc" id="material-price-preview" role="status" aria-live="polite"></div>`;
+  showModal(`<h2 id="modal-title">${isNew?'Novo material':`Novo preço · ${esc(attempt.name)}`}</h2><form id="material-form" novalidate>${fields}<p id="material-error" class="notice" role="alert" tabindex="-1" ${errorMessage?'':'hidden'}>${esc(errorMessage)}</p><div class="button-row"><button class="btn" type="button" data-modal-close>Cancelar</button><button class="btn primary" type="submit">${isNew?'Revisar material':'Revisar preço'}</button></div></form>`,"material");
+  const version=goalDialogVersion,form=document.getElementById("material-form");
+  const names=isNew?['name','category','unit','supplier']:['date','value','note'];
+  const nodeFor=key=>document.getElementById(isNew?'material-'+key:'material-price-'+key);
+  names.forEach(key=>{nodeFor(key).value=attempt[key]});if(isNew)document.getElementById("material-color").checked=attempt.variantByColor;
+  function read(){names.forEach(key=>attempt[key]=nodeFor(key).value);if(isNew)attempt.variantByColor=document.getElementById("material-color").checked}
+  function update(){if(!materialIsCurrent(attempt,version))return;read();if(!isNew){const preview=document.getElementById("material-price-preview");try{preview.textContent=materialPricePreview(attempt,materialInput(attempt))}catch(error){preview.textContent=error.message}}}
+  names.forEach(key=>{nodeFor(key).oninput=update;nodeFor(key).onchange=update});if(isNew)document.getElementById("material-color").onchange=update;update();
+  form.onsubmit=event=>{
+    event.preventDefault();if(!materialIsCurrent(attempt,version)||attempt.phase!=="form"||!materialReady(attempt))return;
+    read();let input;try{input=materialInput(attempt)}catch(error){const alert=document.getElementById("material-error");alert.textContent=error.message;alert.hidden=false;alert.focus?.();return}
+    materialConfirm(attempt,input);
+  };
+  if(errorMessage)document.getElementById("material-error").focus?.();else nodeFor(isNew?'name':'date').focus?.();
+}
+function materialConfirm(attempt,input){
+  attempt.phase="confirm";const isNew=attempt.mode==="new",category=isNew?FioriMaterials.categories.find(category=>category.id===input.category):null;
+  const preview=isNew?`<p><strong>${esc(input.name.trim())}</strong></p><p>${esc(category.label)} · ${esc(input.unit)}${input.supplier?` · ${esc(input.supplier.trim())}`:''}${input.variantByColor?' · Varia por cor':''}</p><p class="sub">Sem preço cadastrado. O valor ficará a conferir até uma vigência ser confirmada.</p>`:`<p><strong>${esc(attempt.name)}</strong></p><p>${esc(materialPricePreview(attempt,input))}</p>${input.note?`<p>${esc(input.note.trim())}</p>`:''}<p class="sub">Este preço será acrescentado ao histórico e não poderá ser editado ou apagado.</p>`;
+  showModal(`<h2 id="modal-title">${isNew?'Confirmar novo material?':'Confirmar novo preço?'}</h2>${preview}<div class="button-row"><button class="btn" type="button" data-modal-close>Cancelar</button><button class="btn" type="button" id="material-back">Voltar</button><button class="btn primary" type="button" id="material-confirm">${isNew?'Confirmar material':'Confirmar preço'}</button></div>`,"material");
+  const version=goalDialogVersion,confirm=document.getElementById("material-confirm");let used=false;
+  document.getElementById("material-back").onclick=()=>{if(!used&&materialIsCurrent(attempt,version))materialForm(attempt)};
+  confirm.onclick=()=>{
+    if(used||!materialIsCurrent(attempt,version)||attempt.phase!=="confirm")return;used=true;confirm.disabled=true;
+    if(!materialReady(attempt))return;
+    try{
+      const previous=data,next=isNew?FioriMaterials.addMaterial(attempt.base,input):FioriMaterials.addPrice(attempt.base,attempt.materialId,input);
+      if(!persistCandidate(next,previous)){materialForm(attempt,"Não foi possível salvar. Confira o espaço e a conexão; revise os dados para tentar novamente.");return}
+      data=loadData(next);closeModal();render();showToast(window.fioriOnline?.onlineMode?"Cadastro salvo neste aparelho. Aguardando confirmação online.":"Cadastro salvo neste aparelho.");
+    }catch(error){materialForm(attempt,error.message)}
+  };
+  document.getElementById("material-back").focus?.();
+}
+
 function backupStatus(){
   if(!data.lastBackup)return{warn:true,text:"Nenhum backup feito ainda."};
   const days=Math.floor((Date.now()-new Date(data.lastBackup).getTime())/86400000);
@@ -953,12 +1064,13 @@ function refreshMountingRateAvailability(){
   const notice=document.getElementById("mounting-rate-online-warning");if(notice)notice.hidden=!busy;
 }
 function renderSettings(){
-  invalidateMountingRateDialog();invalidateSheetPatternDialog();const settingsGeneration=++mountingSettingsGeneration;
+  invalidateMaterialDialog();invalidateMountingRateDialog();invalidateSheetPatternDialog();const settingsGeneration=++mountingSettingsGeneration;
   const models=activeModels(),mountings=activeMountings(),bs=backupStatus(),days=[{n:1,l:"Seg"},{n:2,l:"Ter"},{n:3,l:"Qua"},{n:4,l:"Qui"},{n:5,l:"Sex"},{n:6,l:"Sáb"},{n:0,l:"Dom"}];
   document.getElementById("tab-settings").innerHTML=`
     <div class="block"><h2>Padrões da fábrica</h2><p class="sub">Esses valores alimentam a equivalência de quantidades e o botão de kits. As novas fichas por cor e as metas usam sempre 72 pares.</p><div class="form-grid"><div class="field"><label for="pairs-sheet">Pares por ficha na equivalência</label><input id="pairs-sheet" inputmode="numeric" value="${data.settings.pairsPerSheet}"></div><div class="field"><label for="pairs-kit">Pares por kit</label><input id="pairs-kit" inputmode="numeric" value="${data.settings.pairsPerKit}"></div></div><button class="btn primary full" id="save-patterns">Salvar padrões</button></div>
     <div class="block"><h2>Fichas de cores e numeração</h2><p class="sub">Cada ficha tem 72 pares. Configure por linha ou referência; mudanças valem somente para novos lançamentos. A Ref.315 e linhas sem grade confirmada precisam de padrão próprio.</p><button class="btn full" id="configure-sheet-pattern">Configurar ficha padrão</button></div>
     <div class="block"><h2>Componentes controlados</h2><p class="sub">Cada par pronto baixa um cabedal do modelo e uma palmilha e um solado da linha correspondente, sempre na mesma montagem.</p><div class="summary-grid">${COMPONENTS.map(c=>`<div class="summary-stat"><strong>${esc(c.name)}</strong><span>controle em pares</span></div>`).join("")}</div></div>
+    ${materialsSettingsMarkup()}
     <div class="block"><h2>Custos por linha</h2><p class="sub">Palmilha e solado são compartilhados por linha. Estes valores são os custos oficiais usados no estoque.</p><div class="settings-list">${Object.entries(data.settings.lineCosts||{}).sort(([a],[b])=>a.localeCompare(b,"pt-BR",{numeric:true})).map(([line,c])=>`<div class="row"><div class="row-top"><strong>Linha ${esc(line)}</strong><span>${c.usesPalmilha===false?"Sem palmilha":""}</span></div><div class="form-grid"><div class="field"><label>Solado / par</label><input inputmode="decimal" data-line-cost="${esc(line)}" data-line-key="solado" value="${Number(c.solado||0).toLocaleString("pt-BR",{minimumFractionDigits:2,maximumFractionDigits:2})}"></div><div class="field"><label>Palmilha / par</label><input inputmode="decimal" data-line-cost="${esc(line)}" data-line-key="palmilha" ${c.usesPalmilha===false?"disabled":""} value="${Number(c.palmilha||0).toLocaleString("pt-BR",{minimumFractionDigits:2,maximumFractionDigits:2})}"></div></div></div>`).join("")}</div><button class="btn primary full" id="save-line-costs">Salvar custos das linhas</button></div>
     <div class="block"><h2>Montagens</h2><p class="sub">A tarifa vale pela data da produção. Cadastre cada mudança com a data inicial confirmada; valores já congelados permanecem preservados.</p><div class="settings-list">${mountings.map((x,i)=>mountingSettingsItem(x,i,mountings.length)).join("")}</div><p class="notice" id="mounting-rate-online-warning" ${assemblyBusy()?"":"hidden"}>Aguarde a base online confirmar os dados ou resolva o conflito para definir uma vigência.</p>${data.settings.mountings.some(x=>x.active===false)?`<details class="mounting-rate-history"><summary>Montagens inativas · somente leitura</summary>${data.settings.mountings.filter(x=>x.active===false).map(x=>mountingSettingsItem(x,0,0,true)).join("")}</details>`:""}<button class="btn full" id="add-mounting">Adicionar montagem</button></div>
     <div class="block"><h2>Modelos e fichas de custo</h2><p class="sub">No modelo novo, informe referência, linha, custo do cabedal e custo total. Solado e palmilha são herdados da linha.</p><div class="settings-list">${models.map((x,i)=>modelSettingsItem(x,i,models.length)).join("")}</div><button class="btn full" data-add-item="models">Adicionar modelo</button></div>
@@ -971,6 +1083,8 @@ function renderSettings(){
   document.getElementById("save-days").onclick=saveDays;
   document.querySelectorAll("[data-name-id]").forEach(i=>i.onchange=()=>renameItem(i.dataset.type,i.dataset.nameId,i.value));
   document.querySelectorAll("[data-define-rate]").forEach(b=>b.onclick=()=>{if(settingsGeneration===mountingSettingsGeneration&&ui.tab==="settings")openMountingRate(b.dataset.defineRate,b)});
+  document.getElementById("new-material").onclick=event=>{if(settingsGeneration===mountingSettingsGeneration&&ui.tab==="settings")openMaterial("new",null,event.currentTarget)};
+  document.querySelectorAll("[data-material-price]").forEach(button=>button.onclick=()=>{if(settingsGeneration===mountingSettingsGeneration&&ui.tab==="settings")openMaterial("price",button.dataset.materialPrice,button)});
   document.querySelectorAll("[data-edit-model]").forEach(b=>b.onclick=()=>editModel(b.dataset.editModel));
   document.querySelectorAll("[data-move]").forEach(b=>b.onclick=()=>moveItem(b.dataset.type,b.dataset.id,b.dataset.move));
   document.querySelectorAll("[data-remove]").forEach(b=>b.onclick=()=>removeItem(b.dataset.type,b.dataset.remove));
@@ -1173,7 +1287,7 @@ function switchTab(tab){
   document.querySelector(".actions").hidden=tab!=="week";render();
 }
 function render(){
-  invalidateMountingRateDialog();invalidateSheetPatternDialog();
+  invalidateMaterialDialog();invalidateMountingRateDialog();invalidateSheetPatternDialog();
   if(ui.tab==="week"&&typeof FioriGeneral!=="undefined"&&(!ui.viewWeek||ui.viewWeek===currentWeekKey())){renderWeek();return}
   if(ui.tab==="week")renderWeek();
   if(ui.tab==="entry")renderEntry();
@@ -1192,7 +1306,7 @@ document.getElementById("edit-goal").onclick=goalModal;
 document.getElementById("share").onclick=share;
 document.getElementById("backup-file").onchange=e=>{const f=e.target.files?.[0];if(f)importBackup(f)};
 document.getElementById("modal").onclick=e=>{if(e.target.id==="modal"||e.target.closest("[data-modal-close]"))closeModal()};
-document.addEventListener("keydown",e=>{if(e.key==="Tab"&&(mountingRateAttempt||goalDialog==="sheet-pattern"||goalDialog==="stock-adjustment")&&!document.getElementById("modal").hidden){const focusable=[...document.getElementById("modal-sheet").querySelectorAll('button:not([disabled]),input:not([disabled]),select:not([disabled]),[tabindex="0"]')];const first=focusable[0],last=focusable[focusable.length-1];if(e.shiftKey&&document.activeElement===first){e.preventDefault();last?.focus()}else if(!e.shiftKey&&document.activeElement===last){e.preventDefault();first?.focus()}}});
+document.addEventListener("keydown",e=>{if(e.key==="Tab"&&(materialAttempt||mountingRateAttempt||goalDialog==="sheet-pattern"||goalDialog==="stock-adjustment")&&!document.getElementById("modal").hidden){const focusable=[...document.getElementById("modal-sheet").querySelectorAll('button:not([disabled]),input:not([disabled]),select:not([disabled]),[tabindex="0"]')];const first=focusable[0],last=focusable[focusable.length-1];if(e.shiftKey&&document.activeElement===first){e.preventDefault();last?.focus()}else if(!e.shiftKey&&document.activeElement===last){e.preventDefault();first?.focus()}}});
 document.addEventListener("keydown",e=>{if(e.key==="Escape"&&!document.getElementById("modal").hidden)closeModal()});
 makeIcon();render();
 // Goal onboarding is decided only after authentication and a confirmed online read.
@@ -1644,7 +1758,7 @@ if("serviceWorker" in navigator)navigator.serviceWorker.register("sw.js").catch(
 
   const oldRender=render;
   render=function(){
-    invalidateStockAdjustmentDialog();invalidateMountingRateDialog();invalidateSheetPatternDialog();if(ui.tab==="stock"){renderStock();return}
+    invalidateStockAdjustmentDialog();invalidateMaterialDialog();invalidateMountingRateDialog();invalidateSheetPatternDialog();if(ui.tab==="stock"){renderStock();return}
     oldRender();
   };
 
@@ -1917,7 +2031,7 @@ if("serviceWorker" in navigator)navigator.serviceWorker.register("sw.js").catch(
   }
 
   const previousRender=render;
-  render=function(){invalidateMountingRateDialog();invalidateSheetPatternDialog();if(ui.tab==="expenses"){renderExpenses();return}previousRender()};
+  render=function(){invalidateMaterialDialog();invalidateMountingRateDialog();invalidateSheetPatternDialog();if(ui.tab==="expenses"){renderExpenses();return}previousRender()};
   switchTab=function(tab){
     ui.tab=tab;
     document.querySelectorAll("nav [role=tab]").forEach(b=>b.setAttribute("aria-selected",b.dataset.tab===tab));
@@ -2069,7 +2183,7 @@ if("serviceWorker" in navigator)navigator.serviceWorker.register("sw.js").catch(
     document.querySelectorAll("[data-sales-receipt]").forEach(b=>b.onclick=()=>{const order=data.salesControl.orders.find(x=>x.id===b.dataset.salesReceipt);if(order)openReceipt(order);else showToast("Pedido não encontrado. Abra a aba Pedidos novamente.")});
   }
   const prevRenderSales=render;
-  render=function(){invalidateMountingRateDialog();invalidateSheetPatternDialog();if(ui.tab==="sales"){renderSales();return}prevRenderSales()};
+  render=function(){invalidateMaterialDialog();invalidateMountingRateDialog();invalidateSheetPatternDialog();if(ui.tab==="sales"){renderSales();return}prevRenderSales()};
   const prevSwitchSales=switchTab;
   switchTab=function(tab){prevSwitchSales(tab);if(tab==="sales"){["week","stock","expenses","sales","entry","history","settings"].forEach(k=>{const el=document.getElementById("tab-"+k);if(el)el.hidden=k!==tab});renderSales()}};
   document.querySelectorAll('nav [role=tab]').forEach(b=>b.onclick=()=>switchTab(b.dataset.tab));
@@ -2120,7 +2234,7 @@ if("serviceWorker" in navigator)navigator.serviceWorker.register("sw.js").catch(
     else if(goalDialog==="onboarding")closeModal();
   }
   const authRoot=document.getElementById("remote-auth"),authMsg=document.getElementById("remote-auth-msg"),loginForm=document.getElementById("remote-login-form"),activateForm=document.getElementById("remote-activate-form"),firstAccess=document.getElementById("remote-first-access");
-  const setStatus=text=>{const el=document.getElementById("header-status");if(el)el.textContent=text;refreshMountingRateAvailability();refreshGeneralSync()};
+  const setStatus=text=>{const el=document.getElementById("header-status");if(el)el.textContent=text;refreshMountingRateAvailability();refreshMaterialAvailability();refreshGeneralSync()};
   const authMessage=(text,error=false)=>{authMsg.textContent=text||"";authMsg.classList.toggle("error",!!error)};
   const unlock=()=>{document.body.classList.remove("remote-lock");authRoot.hidden=true},lock=()=>{
     authenticated=false;authenticatedUser=null;remoteReady=false;confirmedData=null;promptedWeek=null;loadSequence++;clearTimeout(saveTimer);
@@ -2188,7 +2302,7 @@ if("serviceWorker" in navigator)navigator.serviceWorker.register("sw.js").catch(
       if(sequence!==loadSequence||!authenticated)return false;
       await restorePendingOrRemote(row);
       if(sequence!==loadSequence||!authenticated)return false;
-      remoteReady=true;unlock();if(ui.tab==="week")renderWeek();refreshGeneralSync();refreshMountingRateAvailability();subscribeRealtime();reconcileGoalPrompt();return true;
+      remoteReady=true;unlock();if(ui.tab==="week")renderWeek();refreshGeneralSync();refreshMountingRateAvailability();refreshMaterialAvailability();subscribeRealtime();reconcileGoalPrompt();return true;
     }catch(_){
       if(sequence===loadSequence){lock();authMessage("Não foi possível carregar a base online. Confira a conexão e o acesso da conta e tente entrar novamente.",true)}
       return false;
