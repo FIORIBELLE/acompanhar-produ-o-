@@ -1,13 +1,14 @@
 'use strict';
 const test=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path'),vm=require('node:vm');
 const {state}=require('./fixtures/dashboard-state');
+const {fixedClock}=require('./helpers/fixed-clock');
 const html=fs.readFileSync(path.join(__dirname,'../index.html'),'utf8');
 const scripts=[...html.matchAll(/<script([^>]*)>([\s\S]*?)<\/script>/g)].filter(m=>m[2].trim());
 const STORAGE='acompanhar_producao_v2',PENDING='acompanhar_producao_remote_pending_v2',CONFLICT='acompanhar_producao_remote_conflict_v1',ORPHAN='acompanhar_producao_presync_recovery_v1',WEEK='2026-10-05';
 const clone=x=>JSON.parse(JSON.stringify(x)),tick=()=>new Promise(resolve=>setImmediate(resolve));
 function row(goal=1200,revision=39){const data=state();data.onboardingDone=false;data.weeks[WEEK].goal=goal;return{data,revision,updated_at:'2026-10-08T00:00:00Z'}}
 function deferred(){let resolve;const promise=new Promise(r=>resolve=r);return{promise,resolve}}
-function app({remote=row(),local=null,session=null,pending=null,readError=null,missingSdk=false,writeErrorKey=null,firstSessionRead=null}={}){
+function app({remote=row(),local=null,session=null,pending=null,readError=null,missingSdk=false,writeErrorKey=null,firstSessionRead=null,now='2026-10-08T01:00:00Z'}={}){
  const nodes=new Map(),storage=new Map(),writes=[],rpcs=[],timers=new Map(),events=new Map();let timerId=0,authListener,realtime,reads=0,readOverride=null,rpcOverride=null,signInOverride=null,sessionOverride=null,sessionReads=0,signIns=0;
  if(local)storage.set(STORAGE,JSON.stringify(local));if(pending)storage.set(PENDING,JSON.stringify(pending));
  const classList=()=>{const values=new Set();return{add:x=>values.add(x),remove:x=>values.delete(x),contains:x=>values.has(x),toggle(x,on){if(on)values.add(x);else values.delete(x)}}};
@@ -17,9 +18,9 @@ function app({remote=row(),local=null,session=null,pending=null,readError=null,m
  from(){return{select(){return this},eq(){return this},async single(){reads++;if(readOverride)return readOverride();return{data:clone(remote),error:readError}}}},
  channel(){return{on(_event,_filter,fn){realtime=fn;return this},subscribe(){return this}}},
  async rpc(name,args){rpcs.push({name,args:clone(args)});if(rpcOverride)return rpcOverride(name,args);if(args.p_expected_revision!==remote.revision)return{data:null,error:{message:'revision conflict'}};remote={data:clone(args.p_data),revision:remote.revision+1};return{data:[{new_revision:remote.revision}],error:null}}};
- const FixedDate=class extends Date{constructor(...args){super(...(args.length?args:['2026-10-08T01:00:00Z']))}static now(){return new Date('2026-10-08T01:00:00Z').getTime()}};
+ const clock=fixedClock(now);
  const window={scrollTo(){},addEventListener(name,fn){events.set(name,fn)},...(missingSdk?{}:{supabase:{createClient:()=>sb}})};
- const context=vm.createContext({FioriGeneral:require('../general-dashboard'),FioriAssembly:require('../assembly-finance'),FioriInventory:require('../inventory-guard'),FioriDashboard:require('../dashboard-view'),FioriFinance:require('../finance-preview'),FioriFulfillment:require('../order-fulfillment'),Date:FixedDate,Intl,console,navigator:{onLine:true},
+ const context=vm.createContext({FioriGeneral:require('../general-dashboard'),FioriAssembly:require('../assembly-finance'),FioriInventory:require('../inventory-guard'),FioriDashboard:require('../dashboard-view'),FioriFinance:require('../finance-preview'),FioriFulfillment:require('../order-fulfillment'),Date:clock.Date,Intl,console,navigator:{onLine:true},
  setTimeout(fn,delay){timers.set(++timerId,{fn,delay});return timerId},clearTimeout(id){timers.delete(id)},
  localStorage:{getItem:key=>storage.get(key)??null,setItem(key,value){if(key===writeErrorKey)throw new Error("Synthetic quota exceeded");storage.set(key,String(value));writes.push({key,value:String(value)})},removeItem(key){storage.delete(key)}},
  document:{body,getElementById:node,querySelector:node,querySelectorAll(selector){if(selector==='[data-define-rate]')return ['a','b','empty'].map(id=>{const button=node('rate-button-'+id);button.dataset={defineRate:id};return button});return[]}},window,location:{reload(){}}});
@@ -27,7 +28,7 @@ function app({remote=row(),local=null,session=null,pending=null,readError=null,m
  vm.runInContext(main,context);for(const script of scripts.slice(1).filter(m=>!m[1].includes('remote-sync-v2')))vm.runInContext(script[2],context);
  vm.runInContext('render();globalThis.testApi={settings:()=>switchTab("settings"),openRate:()=>openMountingRate("a"),getData:()=>data,persist:next=>persistCandidate(next),save:()=>save(),onboarding:()=>onboarding(),goalModal:()=>goalModal(),closeModal:()=>closeModal(),showModal:(text)=>showModal(text),getGoalDialog:()=>goalDialog,getDialogVersion:()=>goalDialogVersion,ensureWeek:(key)=>ensureWeek(key)}',context);
  vm.runInContext(scripts.find(m=>m[1].includes('remote-sync-v2'))[2],context);
- return{api:context.testApi,node,storage,writes,rpcs,timers,body,online:()=>window.fioriOnline,getRemote:()=>clone(remote),getReads:()=>reads,
+ return{api:context.testApi,node,storage,writes,rpcs,timers,body,clock,online:()=>window.fioriOnline,getRemote:()=>clone(remote),getReads:()=>reads,
  async ready(){await tick();await tick()},async login(){node('remote-email').value='synthetic@example.invalid';node('remote-password').value='synthetic-password';await node('remote-login-form').onsubmit({preventDefault(){}});await tick()},
  setWriteErrorKey(key){writeErrorKey=key},setSessionRead(fn){sessionOverride=fn},getSignIns:()=>signIns,setSignIn(fn){signInOverride=fn},setRpc(fn){rpcOverride=fn},setRead(fn){readOverride=fn},setReadError(error){readError=error},setRemote(next){remote=clone(next)},setSession(next){session=next},signOut(){session=null;authListener?.('SIGNED_OUT',null)},emit(next){remote=clone(next);realtime?.({new:clone(next)})},async focus(){await events.get('focus')?.()},
  async begin(goal='777'){node('first-goal').value=goal;await node('start-app').onclick()},async flush(){await window.fioriOnline.flush()},async runTimers(){const pending=[...timers.values()];timers.clear();for(const {fn} of pending)await fn();await tick()}};
@@ -165,3 +166,29 @@ test('legacy spaced strings are pairs and malformed model goal types never becom
 test('general dashboard leaves loading immediately after successful online hydration',async()=>{const a=app({session:authenticated});await a.ready();assert.match(a.node('tab-week').innerHTML,/id="general-production"/);assert.doesNotMatch(a.node('tab-week').innerHTML,/id="general-loading"/);assert.equal(a.rpcs.length,0);assert.ok(a.online().displayStatus().loadedAt)});
 test('failed online load never displays a zero-filled general dashboard',async()=>{const a=app({session:authenticated,readError:{message:'unavailable'}});await a.ready();assert.doesNotMatch(a.node('tab-week').innerHTML,/id="general-production"/);assert.equal(a.online().displayStatus().ready,false);assert.equal(a.rpcs.length,0)});
 test('new confirmed revision hides outdated server modification time until next read',async()=>{const a=app({session:authenticated});await a.ready();assert.equal(a.online().displayStatus().updatedAt,'2026-10-08T00:00:00Z');a.api.getData().syntheticChange=true;a.api.save();await a.flush();assert.equal(a.online().displayStatus().updatedAt,null);assert.equal(a.rpcs.length,1)});
+
+const NEW_WEEK='2026-10-12',NEW_WEEK_NOW='2026-10-12T15:00:00Z';
+test('new-week login, goal preview, invalid input and cancel send no CAS or pending state',async()=>{
+ const a=app({session:authenticated,now:NEW_WEEK_NOW});await a.ready();
+ const before=JSON.stringify(a.api.getData()),writes=a.writes.length;
+ assert.equal(a.api.getData().weeks[NEW_WEEK],undefined);a.api.closeModal();a.api.goalModal();
+ fillGoal(a,'864');a.node('save-goal').onclick();a.node('use-goal-sum').onclick();a.api.closeModal();await a.flush();
+ assert.equal(JSON.stringify(a.api.getData()),before);assert.equal(a.writes.length,writes);assert.equal(a.storage.has(PENDING),false);assert.equal(a.rpcs.length,0);
+});
+test('confirmed new-week goal creates one atomic candidate through existing save_app_state CAS',async()=>{
+ const a=app({session:authenticated,now:NEW_WEEK_NOW});await a.ready();a.api.closeModal();
+ const before=clone(a.api.getData());a.api.goalModal();fillGoal(a);const save=a.node('save-goal').onclick;save();save();await a.flush();
+ const next=a.getRemote().data,w=next.weeks[NEW_WEEK];assert.equal(w.goal,1008);assert.deepEqual(w.modelGoals,{m507:360,m512:360,m319:144,m506:144});assert.deepEqual(w.entries,[]);assert.equal(w.createdAt,'2026-10-12T15:00:00.000Z');
+ assert.deepEqual(w.modelSnapshot,before.settings.models.filter(m=>m.active!==false));assert.deepEqual(w.mountingSnapshot,before.settings.mountings.filter(m=>m.active!==false));
+ delete next.weeks[NEW_WEEK];assert.deepEqual(next,before);assert.equal(a.rpcs.length,1);assert.equal(a.rpcs[0].name,'save_app_state');assert.equal(a.rpcs[0].args.p_expected_revision,39);
+});
+test('failed new-week candidate persistence leaves no draft week and permits one reviewed retry',async()=>{
+ const a=app({session:authenticated,now:NEW_WEEK_NOW});await a.ready();a.api.closeModal();const before=JSON.stringify(a.api.getData());a.api.goalModal();fillGoal(a);a.setWriteErrorKey(PENDING);
+ a.node('save-goal').onclick();assert.equal(JSON.stringify(a.api.getData()),before);assert.equal(a.api.getData().weeks[NEW_WEEK],undefined);await a.flush();assert.equal(a.rpcs.length,0);
+ a.setWriteErrorKey(null);a.node('save-goal').onclick();await a.flush();assert.equal(a.rpcs.length,1);assert.equal(a.getRemote().data.weeks[NEW_WEEK].goal,1008);
+});
+test('goal opened before the Sao Paulo week boundary cannot create the old or new week afterward',async()=>{
+ const remote=row();delete remote.data.weeks[WEEK];const a=app({remote,session:authenticated,now:'2026-10-12T02:59:59Z'});await a.ready();a.api.closeModal();a.api.goalModal();fillGoal(a);const before=JSON.stringify(a.api.getData());
+ a.clock.set('2026-10-12T03:00:00Z');a.node('save-goal').onclick();await a.flush();
+ assert.equal(JSON.stringify(a.api.getData()),before);assert.equal(a.api.getData().weeks[WEEK],undefined);assert.equal(a.api.getData().weeks[NEW_WEEK],undefined);assert.equal(a.rpcs.length,0);
+});

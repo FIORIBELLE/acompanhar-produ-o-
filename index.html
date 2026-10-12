@@ -226,7 +226,7 @@ footer{color:var(--soft);font-size:.78rem;text-align:center;padding:8px 0 24px}
     <button class="btn" id="edit-goal" type="button">Editar meta</button>
     <button class="btn primary" id="share" type="button">Compartilhar resumo</button>
   </div>
-  <footer id="app-footer">Base online Fiori Belle · sincronização automática · v2026.10.11-r8.7.0</footer>
+  <footer id="app-footer">Base online Fiori Belle · sincronização automática · v2026.10.12-r8.7.1</footer>
 </div>
 
 <div class="toast" id="toast" hidden role="status" aria-live="polite"></div>
@@ -366,13 +366,15 @@ function previousGoal(key){
   const keys=Object.keys(data.weeks).filter(k=>k<key&&Number(data.weeks[k]?.goal)>0).sort().reverse();
   return keys.length?Number(data.weeks[keys[0]].goal):null;
 }
-function ensureWeek(key=currentWeekKey()){
-  if(!data.weeks[key])data.weeks[key]={goal:null,modelGoals:{},entries:[],modelSnapshot:clone(activeModels()),mountingSnapshot:clone(activeMountings()),createdAt:new Date().toISOString()};
-  const w=data.weeks[key];
+// Mutation helper: use only while preparing an explicit write, never a view.
+function ensureWeek(key=currentWeekKey(),target=data){
+  const models=()=>target.settings.models.filter(x=>x.active!==false),mountings=()=>target.settings.mountings.filter(x=>x.active!==false);
+  if(!target.weeks[key])target.weeks[key]={goal:null,modelGoals:{},entries:[],modelSnapshot:clone(models()),mountingSnapshot:clone(mountings()),createdAt:new Date().toISOString()};
+  const w=target.weeks[key];
   if(!Array.isArray(w.entries))w.entries=[];
   if(!w.modelGoals||typeof w.modelGoals!=="object")w.modelGoals={};
-  if(!Array.isArray(w.modelSnapshot))w.modelSnapshot=clone(activeModels());
-  if(!Array.isArray(w.mountingSnapshot))w.mountingSnapshot=clone(activeMountings());
+  if(!Array.isArray(w.modelSnapshot))w.modelSnapshot=clone(models());
+  if(!Array.isArray(w.mountingSnapshot))w.mountingSnapshot=clone(mountings());
   return w;
 }
 function weekData(key){const w=data.weeks[key]||{};return {...w,goal:w.goal??null,modelGoals:w.modelGoals||{},entries:w.entries||[]}}
@@ -463,7 +465,7 @@ function confirmAction({title,message,confirmText="Confirmar",danger=false,onCon
 }
 function goalModal(){
   if(!window.fioriOnline?.canEditGoal?.()){showToast("Entre e aguarde a confirmação da base online antes de editar a meta.");return}
-  const key=currentWeekKey(),w=ensureWeek(key),models=FioriDashboard.goalModels(data,w),baseline=JSON.stringify(data);
+  const key=currentWeekKey(),w=weekData(key),models=FioriDashboard.goalModels(data,w),baseline=JSON.stringify(data);
   const fields=models.map((model,index)=>{const stored=w.modelGoals[model.id],numeric=typeof stored==="string"&&/^\d+$/.test(stored.trim())?Number(stored.trim()):stored;return {model,index,qty:numeric}});
   showModal(`<h2 id="modal-title">Meta da semana</h2><p class="sub">Semana de ${weekLabel(key)}. 1 ficha = 72 pares. O plano representa a produção nova desta semana.</p>
     <div class="field"><label for="goal-total">Meta total em pares</label><input id="goal-total" inputmode="numeric" pattern="[0-9]*" value="${esc(w.goal??"")}" placeholder="Ex.: 1008"></div>
@@ -496,7 +498,7 @@ function goalModal(){
     if(!parsed.ok){showToast(parsed.message);return}
     const nextGoals={...w.modelGoals,...parsed.modelGoals};
     if(w.goal===parsed.goal&&JSON.stringify(w.modelGoals)===JSON.stringify(nextGoals)){closeModal();showToast("A meta já está salva.");return}
-    const before=data,candidate=clone(data);candidate.weeks[key].goal=parsed.goal;candidate.weeks[key].modelGoals=nextGoals;
+    const before=data,candidate=clone(data),week=ensureWeek(key,candidate);week.goal=parsed.goal;week.modelGoals=nextGoals;
     used=true;data=candidate;let saved=false;
     try{saved=save()!==false}catch(_){}
     if(!saved){data=before;used=false;showToast("Não foi possível salvar a meta. Os dados anteriores foram preservados.");return}
@@ -1173,7 +1175,6 @@ function switchTab(tab){
 function render(){
   invalidateMountingRateDialog();invalidateSheetPatternDialog();
   if(ui.tab==="week"&&typeof FioriGeneral!=="undefined"&&(!ui.viewWeek||ui.viewWeek===currentWeekKey())){renderWeek();return}
-  ensureWeek();
   if(ui.tab==="week")renderWeek();
   if(ui.tab==="entry")renderEntry();
   if(ui.tab==="history")renderHistory();
