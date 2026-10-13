@@ -1,6 +1,6 @@
 "use strict";
-const CACHE="acompanhar-producao-shell-v41";
-const SHELL=["./","./index.html","./manifest.webmanifest","./inventory-guard.js?v=35","./stock-adjustment.js?v=35","./general-dashboard.js?v=36","./material-catalog.js?v=40","./dashboard-view.js?v=34","./sales-receipt.js","./sales-order.js?v=28","./order-fulfillment.js?v=28","./finance-preview.js?v=28","./assembly-finance.js?v=30","./standard-sheet.js?v=33"];
+const CACHE="acompanhar-producao-shell-v43";
+const SHELL=["./","./index.html","./manifest.webmanifest","./inventory-guard.js?v=35","./stock-adjustment.js?v=35","./general-dashboard.js?v=36","./material-catalog.js?v=40","./tech-sheet.js?v=43","./tech-sheet-ui.js?v=43","./dashboard-view.js?v=34","./sales-receipt.js","./sales-order.js?v=28","./order-fulfillment.js?v=28","./finance-preview.js?v=28","./assembly-finance.js?v=30","./standard-sheet.js?v=33"];
 
 self.addEventListener("install",event=>{
   event.waitUntil(caches.open(CACHE).then(cache=>cache.addAll(SHELL)).then(()=>self.skipWaiting()));

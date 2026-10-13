@@ -65,25 +65,59 @@
     return Number(rounded*sign);
   }
   const exact=numerator=>({numerator:String(numerator),denominator:1000});
-  function applicableVersion(state,ref,when){
-    refValue(ref);date(when);
+  function correctionTimestamp(value){
+    if(typeof value!=='string'||!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z$/.test(value)||!materials().validDate(value.slice(0,10))||!Number.isFinite(Date.parse(value))||new Date(value).toISOString().slice(0,19)!==value.slice(0,19)){
+      fail('invalid_timestamp','A data da correção deve ser uma data e hora UTC válida.');
+    }
+    return Date.parse(value);
+  }
+  function versionHistory(state,ref){
+    refValue(ref);
     const config=settings(state).techSheets;
-    if(config===undefined)return null;
+    if(config===undefined)return [];
     if(!object(config))fail('invalid_tech_sheets','Cadastro de fichas técnicas inválido.');
-    if(!owns(config,ref))return null;
+    if(!owns(config,ref))return [];
     const sheet=config[ref];
     if(!object(sheet)||sheet.ref!==ref||!Array.isArray(sheet.versions))fail('invalid_tech_sheet','Referência ou histórico da ficha técnica inválido.');
-    const ids=new Set(),dates=new Set();let selected=null;
-    for(const version of sheet.versions){
+    const ids=new Set(),dates=new Set(),byId=new Map(),successors=new Map();let lastCorrectionTime=null;
+    for(let index=0;index<sheet.versions.length;index++){
+      const version=sheet.versions[index];
       if(!object(version))fail('invalid_version','Versão de ficha técnica inválida.');
       identifier(version.id,'Identificador da versão');date(version.validFrom);
-      if(ids.has(version.id)||dates.has(version.validFrom))fail('ambiguous_version','Há versões repetidas ou com a mesma data inicial.');
-      ids.add(version.id);dates.add(version.validFrom);
-      if(version.validFrom<=when&&(!selected||version.validFrom>selected.validFrom))selected=version;
+      if(ids.has(version.id))fail('ambiguous_version','Há identificadores de versão repetidos.');
+      ids.add(version.id);byId.set(version.id,{version,index});
     }
-    // Return an independent JSON projection: callers cannot change the source
-    // through the selected version, its items, quantities or informative colors.
-    return selected===null?null:JSON.parse(JSON.stringify(selected));
+    for(let index=0;index<sheet.versions.length;index++){
+      const version=sheet.versions[index],correction=owns(version,'supersedesVersionId')||owns(version,'correctedAt');
+      if(!correction){
+        if(dates.has(version.validFrom))fail('ambiguous_version','Há versões originais com a mesma data inicial.');
+        dates.add(version.validFrom);continue;
+      }
+      identifier(version.supersedesVersionId,'Identificador da versão corrigida');
+      const time=correctionTimestamp(version.correctedAt),target=byId.get(version.supersedesVersionId);
+      if(!target)fail('invalid_correction_target','A versão corrigida não pertence ao histórico desta referência.');
+      // An earlier target and a single successor enforce a linear append-only
+      // chain. Cycles, forward links, branching and cross-reference links fail.
+      if(target.index>=index)fail('invalid_correction_order','A correção deve vir depois da versão original no histórico.');
+      if(version.validFrom!==target.version.validFrom)fail('invalid_correction_date','A correção deve manter a data inicial da versão original.');
+      if(successors.has(version.supersedesVersionId))fail('stale_version','Esta versão já foi corrigida. Selecione a versão vigente.');
+      for(const row of [version,target.version]){
+        if(owns(row,'createdAt')&&time<correctionTimestamp(row.createdAt))fail('invalid_timestamp','A correção não pode preceder a criação da versão.');
+      }
+      if((lastCorrectionTime!==null&&time<lastCorrectionTime)||(owns(target.version,'correctedAt')&&time<correctionTimestamp(target.version.correctedAt))){
+        fail('invalid_timestamp','A data da correção deve respeitar a ordem do histórico.');
+      }
+      lastCorrectionTime=time;successors.set(version.supersedesVersionId,version);
+    }
+    return sheet.versions.map(version=>({version:JSON.parse(JSON.stringify(version)),correctedBy:successors.has(version.id)?JSON.parse(JSON.stringify(successors.get(version.id))):null}));
+  }
+  function applicableVersion(state,ref,when){
+    refValue(ref);date(when);let selected=null;
+    for(const {version,correctedBy} of versionHistory(state,ref)){
+      if(!correctedBy&&version.validFrom<=when&&(!selected||version.validFrom>selected.validFrom))selected=version;
+    }
+    // versionHistory already returned independent JSON projections.
+    return selected;
   }
   function itemProjection(state,item,when,sizeGroups){
     const issues=[],scope={itemId:object(item)&&typeof item.id==='string'?item.id:null};
@@ -248,5 +282,5 @@
     }
     return result;
   }
-  return {PAIRS_PER_SHEET,SIZE_GROUPS,parseQuantityThousandths,applicableVersion,calculateItemCost,calculateTechSheet};
+  return {PAIRS_PER_SHEET,SIZE_GROUPS,parseQuantityThousandths,versionHistory,applicableVersion,calculateItemCost,calculateTechSheet};
 });

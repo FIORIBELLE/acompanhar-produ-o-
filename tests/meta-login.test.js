@@ -20,13 +20,13 @@ function app({remote=row(),local=null,session=null,pending=null,readError=null,m
  async rpc(name,args){rpcs.push({name,args:clone(args)});if(rpcOverride)return rpcOverride(name,args);if(args.p_expected_revision!==remote.revision)return{data:null,error:{message:'revision conflict'}};remote={data:clone(args.p_data),revision:remote.revision+1};return{data:[{new_revision:remote.revision}],error:null}}};
  const clock=fixedClock(now);
  const window={scrollTo(){},addEventListener(name,fn){events.set(name,fn)},...(missingSdk?{}:{supabase:{createClient:()=>sb}})};
- const context=vm.createContext({FioriMaterials:require('../material-catalog'),FioriGeneral:require('../general-dashboard'),FioriAssembly:require('../assembly-finance'),FioriInventory:require('../inventory-guard'),FioriDashboard:require('../dashboard-view'),FioriFinance:require('../finance-preview'),FioriFulfillment:require('../order-fulfillment'),Date:clock.Date,Intl,console,navigator:{onLine:true},
+ const context=vm.createContext({FioriTechSheets:require('../tech-sheet'),FioriTechSheetUI:require('../tech-sheet-ui'),FioriSheets:require('../standard-sheet'),FioriMaterials:require('../material-catalog'),FioriGeneral:require('../general-dashboard'),FioriAssembly:require('../assembly-finance'),FioriInventory:require('../inventory-guard'),FioriDashboard:require('../dashboard-view'),FioriFinance:require('../finance-preview'),FioriFulfillment:require('../order-fulfillment'),Date:clock.Date,Intl,console,navigator:{onLine:true},
  setTimeout(fn,delay){timers.set(++timerId,{fn,delay});return timerId},clearTimeout(id){timers.delete(id)},
  localStorage:{getItem:key=>storage.get(key)??null,setItem(key,value){if(key===writeErrorKey)throw new Error("Synthetic quota exceeded");storage.set(key,String(value));writes.push({key,value:String(value)})},removeItem(key){storage.delete(key)}},
  document:{body,getElementById:node,querySelector:node,querySelectorAll(selector){if(selector==='[data-define-rate]')return ['a','b','empty'].map(id=>{const button=node('rate-button-'+id);button.dataset={defineRate:id};return button});if(selector==='[data-material-price]')return [node('synthetic-price-button')];for(const mode of ['edit','active','correct'])if(selector==='[data-material-'+mode+']')return [node('synthetic-'+mode+'-button')];return[]}},window,location:{reload(){}}});
  const main=scripts[0][2].slice(0,scripts[0][2].lastIndexOf('\ndocument.querySelectorAll("nav [role=tab]").forEach'));
  vm.runInContext(main,context);for(const script of scripts.slice(1).filter(m=>!m[1].includes('remote-sync-v2')))vm.runInContext(script[2],context);
- vm.runInContext('render();globalThis.testApi={settings:()=>switchTab("settings"),openRate:()=>openMountingRate("a"),openMaterial,materialAttempt:()=>materialAttempt,getData:()=>data,persist:next=>persistCandidate(next),save:()=>save(),onboarding:()=>onboarding(),goalModal:()=>goalModal(),closeModal:()=>closeModal(),showModal:(text)=>showModal(text),getGoalDialog:()=>goalDialog,getDialogVersion:()=>goalDialogVersion,ensureWeek:(key)=>ensureWeek(key)}',context);
+ vm.runInContext('render();globalThis.testApi={settings:()=>switchTab("settings"),openRate:()=>openMountingRate("a"),openMaterial,materialAttempt:()=>materialAttempt,openTechSheet,techSheetSession:()=>techSheetSession,techSheetForm:()=>techSheetForm(techSheetSession),overrideSaveForTest:mode=>{const original=save;save=()=>{if(mode==="false")return false;throw new Error("Synthetic forced save failure")};return ()=>{save=original}},getData:()=>data,persist:next=>persistCandidate(next),save:()=>save(),onboarding:()=>onboarding(),goalModal:()=>goalModal(),closeModal:()=>closeModal(),showModal:(text)=>showModal(text),getGoalDialog:()=>goalDialog,getDialogVersion:()=>goalDialogVersion,ensureWeek:(key)=>ensureWeek(key)}',context);
  vm.runInContext(scripts.find(m=>m[1].includes('remote-sync-v2'))[2],context);
  return{api:context.testApi,node,storage,writes,rpcs,timers,body,clock,online:()=>window.fioriOnline,getRemote:()=>clone(remote),getReads:()=>reads,
  async ready(){await tick();await tick()},async login(){node('remote-email').value='synthetic@example.invalid';node('remote-password').value='synthetic-password';await node('remote-login-form').onsubmit({preventDefault(){}});await tick()},
@@ -323,3 +323,245 @@ for(const kind of ['edit','active','correct'])for(const mode of ['success','pend
 for(const kind of ['edit','active','correct'])test(`material ${kind} remote update or auth loss cancels an old confirmation without writing`,async()=>{for(const change of ['remote','logout']){const a=app({remote:syntheticMaterialRow(),session:authenticated});await a.ready();const callback=reviewSyntheticMaterialExtension(a,kind);if(change==='remote'){const newer=syntheticMaterialRow();newer.revision=40;newer.data.syntheticUpdate=true;a.emit(newer)}else a.signOut();callback();await a.flush();assert.equal(a.rpcs.length,0);assert.equal(a.online().hasPending(),false);assert.equal(a.node('modal').hidden,true)}});
 test('two correction CAS commits form one active chain and do not duplicate on repeated callbacks',async()=>{const initial=syntheticMaterialRow(),a=app({remote:initial,session:authenticated});await a.ready();let callback=reviewSyntheticMaterialExtension(a,'correct');callback();callback();await a.flush();const first=clone(a.getRemote().data.settings.materials[0].prices),secondCallback=reviewSyntheticMaterialExtension(a,'correct');secondCallback();secondCallback();await a.flush();assert.equal(a.rpcs.length,2);assert.equal(a.rpcs[1].args.p_expected_revision,40);const prices=a.getRemote().data.settings.materials[0].prices;assert.equal(prices.length,3);assert.equal(JSON.stringify(prices.slice(0,2)),JSON.stringify(first));assert.equal(prices[2].supersedesPriceId,prices[1].id);assert.equal(require('../material-catalog').activePrices(a.getRemote().data.settings.materials[0]).length,1)});
 test('a concurrent correction is adopted and invalidates a stale correction target without overwriting history',async()=>{const initial=syntheticMaterialRow(),a=app({remote:initial,session:authenticated});await a.ready();const old=reviewSyntheticMaterialExtension(a,'correct'),newer={...initial,revision:40,data:require('../material-catalog').correctPrice(initial.data,'synthetic-material-cas',{id:'synthetic-concurrent-correction',supersedesPriceId:'synthetic-price-before',from:'2026-10-01',unitPriceMills:9876,note:'Outra correção fictícia',correctedAt:'2026-10-08T00:00:00Z',updatedAt:'2026-10-08T00:00:00Z'})};a.emit(newer);old();await a.flush();assert.equal(a.rpcs.length,0);assert.equal(JSON.stringify(a.getRemote().data.settings.materials),JSON.stringify(newer.data.settings.materials));assert.equal(a.online().hasPending(),false)});
+
+// Stage 3: only synthetic technical-sheet versions travel through queue/CAS.
+// The DOM double deliberately does not parse HTML. Form values are assigned
+// explicitly; this verifies the real inline confirmation and online persistence.
+function syntheticTechSheetRow(existing=true){
+ const remote=syntheticMaterialRow();
+ remote.data.settings.materials[0].syntheticMetadata={preserve:'material'};
+ remote.data.settings.syntheticMetadata={preserve:['settings']};
+ remote.data.syntheticMetadata={preserve:['root']};
+ if(existing)remote.data.settings.techSheets={'507':{ref:'507',syntheticMetadata:{preserve:'sheet'},versions:[{
+  id:'synthetic-tech-before',validFrom:'2026-10-01',createdAt:'2026-10-01T15:00:00.000Z',note:'Versão sintética anterior',sizeGroups:[],salePriceMills:6789,
+  items:[{id:'synthetic-tech-item',materialId:'synthetic-material-cas',label:'Posição sintética',qtyPerPair:'0.625',colorMap:{'Azul fictício':'Informação preservada'},syntheticMetadata:{preserve:['item']}}],syntheticMetadata:{preserve:['version']}
+ }]} ,'512':{ref:'512',versions:[],syntheticMetadata:{preserve:'other-ref'}}};
+ return remote;
+}
+function fillSyntheticTechSheet(a,{date='2026-10-07',sale='7,891',qty='0.750'}={}){
+ const values={'tech-date':date,'tech-sale':sale,'tech-note':'Nova versão sintética CAS','tech-material-0':'synthetic-material-cas','tech-label-0':'Posição sintética','tech-mode-0':'single','tech-qty-0':qty};
+ for(const [key,value] of Object.entries(values))a.node(key).value=value;
+}
+function editSyntheticTechSheet(a,options={}){
+ a.api.settings();a.api.openTechSheet('m507');a.node('tech-new').onclick();
+ const session=a.api.techSheetSession();assert.equal(session?.phase,'edit');
+ if(!session.draft.items.length){
+  session.draft.items.push({id:'synthetic-new-tech-item',materialId:'synthetic-material-cas',label:'Posição sintética',qtyPerPair:'0.750',syntheticMetadata:{preserve:'new-item'}});
+  fillSyntheticTechSheet(a,options);a.api.techSheetForm();
+ }
+ fillSyntheticTechSheet(a,options);return session;
+}
+function reviewSyntheticTechSheet(a,options={}){
+ editSyntheticTechSheet(a,options);a.node('tech-form').onsubmit({preventDefault(){}});
+ assert.equal(a.api.techSheetSession()?.phase,'confirm',a.node('tech-error').textContent);
+ return a.node('tech-confirm').onclick;
+}
+function withoutTechSheetChange(candidate,initial){
+ const rest=clone(candidate);
+ if(Object.hasOwn(initial.settings,'techSheets'))rest.settings.techSheets=clone(initial.settings.techSheets);else delete rest.settings.techSheets;
+ return rest;
+}
+for(const existing of [false,true])for(const mode of ['success','pending-quota','cache-quota','conflict','lost-response','guard-reject'])test(`technical sheet ${existing?'new version':'first version'} CAS ${mode} is atomic and append-only`,async()=>{
+ const initial=syntheticTechSheetRow(existing),a=app({remote:initial,session:authenticated});await a.ready();
+ const before=clone(a.api.getData()),cache=a.storage.get(STORAGE),confirm=reviewSyntheticTechSheet(a),id=a.api.techSheetSession().draft.id;
+ if(mode==='pending-quota')a.setWriteErrorKey(PENDING);if(mode==='cache-quota')a.setWriteErrorKey(STORAGE);
+ confirm();confirm();
+ if(mode==='pending-quota'){
+  assert.deepEqual(clone(a.api.getData()),before);assert.equal(a.storage.get(STORAGE),cache);assert.equal(a.storage.has(PENDING),false);
+  assert.equal(a.online().hasPending(),false);assert.equal(a.api.techSheetSession()?.draft.id,id);assert.equal(a.api.techSheetSession()?.phase,'edit');
+  assert.equal(a.node('modal').hidden,false);await a.flush();assert.equal(a.rpcs.length,0);assert.deepEqual(a.getRemote().data,initial.data);return;
+ }
+ assert.equal(a.online().hasPending(),true);assert.equal(a.node('modal').hidden,true);
+ const pending=JSON.parse(a.storage.get(PENDING));assert.equal(pending.baseRevision,39);assert.equal(pending.hydrated,true);assert.equal(pending.localVersion,1);
+ const candidate=pending.data,versions=candidate.settings.techSheets['507'].versions,latest=versions.at(-1);
+ assert.deepEqual(withoutTechSheetChange(candidate,initial.data),initial.data);
+ assert.equal(versions.length,existing?2:1);assert.equal(latest.id,id);assert.equal(latest.validFrom,'2026-10-07');assert.equal(latest.salePriceMills,7891);assert.equal(latest.items[0].qtyPerPair,'0.750');
+ if(existing){
+  assert.equal(JSON.stringify(versions[0]),JSON.stringify(initial.data.settings.techSheets['507'].versions[0]));
+  assert.deepEqual(candidate.settings.techSheets['507'].syntheticMetadata,initial.data.settings.techSheets['507'].syntheticMetadata);
+  assert.deepEqual(candidate.settings.techSheets['512'],initial.data.settings.techSheets['512']);
+  assert.deepEqual(latest.syntheticMetadata,{preserve:['version']});assert.deepEqual(latest.items[0].colorMap,{'Azul fictício':'Informação preservada'});assert.deepEqual(latest.items[0].syntheticMetadata,{preserve:['item']});
+ }
+ if(mode==='cache-quota')assert.equal(a.storage.get(STORAGE),cache);
+ if(mode==='conflict'){const newer=clone(initial);newer.revision=40;newer.data.syntheticConcurrentUpdate=true;a.setRemote(newer)}
+ if(mode==='guard-reject')a.setRpc(()=>({data:null,error:{code:'23514',message:'Synthetic technical-sheet guard refusal'}}));
+ if(mode==='lost-response')a.setRpc((_name,args)=>{a.setRemote({data:clone(args.p_data),revision:40});throw Error('Synthetic technical-sheet response lost after commit')});
+ await a.flush();
+ if(mode==='lost-response'){assert.equal(a.online().hasPending(),true);a.setRpc(null);await a.flush()}
+ assert.equal(a.rpcs.length,1);assert.equal(a.rpcs[0].name,'save_app_state');assert.equal(a.rpcs[0].args.p_expected_revision,39);assert.deepEqual(a.rpcs[0].args.p_data,candidate);
+ if(mode==='conflict'||mode==='guard-reject'){
+  assert.equal(a.online().hasPending(),true);assert.deepEqual(a.getRemote().data.settings.techSheets,initial.data.settings.techSheets);assert.deepEqual(JSON.parse(a.storage.get(PENDING)).data,candidate);
+  if(mode==='conflict'){assert.equal(a.online().conflict(),true);assert.equal(a.getRemote().data.syntheticConcurrentUpdate,true);assert.equal(a.storage.has(CONFLICT),true)}
+ }else{
+  assert.equal(a.online().hasPending(),false);assert.equal(a.storage.has(PENDING),false);assert.deepEqual(a.getRemote().data,candidate);
+ }
+});
+for(const existing of [false,true])test(`technical sheet ${existing?'append':'creation'} CAS preserves raw unknown JSON and absent defaults`,async()=>{
+ const initial=syntheticTechSheetRow(existing);
+ initial.data.settings.models[0].syntheticMetadata={keep:['model',2]};initial.data.settings.mountings[0].syntheticMetadata={keep:['mounting',3]};
+ for(const field of ['cabedalCost','totalCost','usesPalmilha'])delete initial.data.settings.models[0][field];
+ delete initial.data.settings.workDays;delete initial.data.settings.sheetPatterns;delete initial.data.settings.mountingRateHistory;
+ initial.data.weeks={};initial.data.onboardingDone=true;
+ const a=app({remote:initial,session:authenticated,now:'2026-10-13T01:00:00Z'});await a.ready();a.api.closeModal();
+ const confirm=reviewSyntheticTechSheet(a);confirm();confirm();await a.flush();
+ assert.equal(a.rpcs.length,1);assert.deepEqual(withoutTechSheetChange(a.rpcs[0].args.p_data,initial.data),initial.data);
+ assert.equal(Object.hasOwn(a.rpcs[0].args.p_data.settings,'workDays'),false);assert.equal(Object.hasOwn(a.rpcs[0].args.p_data.settings,'sheetPatterns'),false);
+ assert.equal(Object.hasOwn(a.rpcs[0].args.p_data.settings.models[0],'cabedalCost'),false);assert.deepEqual(a.getRemote().data.weeks,{});assert.equal(a.online().hasPending(),false);
+});
+for(const change of ['remote','logout'])test(`technical sheet ${change} invalidates a captured confirmation without a CAS`,async()=>{
+ const initial=syntheticTechSheetRow(),a=app({remote:initial,session:authenticated});await a.ready();
+ const confirm=reviewSyntheticTechSheet(a),before=clone(a.api.getData());let expected=initial.data;
+ if(change==='remote'){
+  const newer=syntheticTechSheetRow();newer.revision=40;newer.data.syntheticIncoming='keep-newer';newer.data.settings.techSheets['507'].versions.push({...clone(newer.data.settings.techSheets['507'].versions[0]),id:'synthetic-incoming-tech',validFrom:'2026-10-07'});
+  expected=newer.data;a.emit(newer);
+ }else a.signOut();
+ assert.equal(a.node('modal').hidden,true);assert.equal(a.api.techSheetSession(),null);confirm();confirm();await a.flush();
+ assert.equal(a.rpcs.length,0);assert.equal(a.online().hasPending(),false);assert.equal(a.storage.has(PENDING),false);assert.deepEqual(a.getRemote().data,expected);
+ if(change==='logout')assert.deepEqual(clone(a.api.getData()),before);else assert.equal(a.api.getData().syntheticIncoming,'keep-newer');
+});
+test('technical sheet pending-quota failure preserves the draft for one reviewed retry',async()=>{
+ const initial=syntheticTechSheetRow(),a=app({remote:initial,session:authenticated});await a.ready();
+ const oldConfirm=reviewSyntheticTechSheet(a),id=a.api.techSheetSession().draft.id,before=JSON.stringify(a.api.getData());
+ a.setWriteErrorKey(PENDING);oldConfirm();oldConfirm();await a.flush();
+ assert.equal(a.rpcs.length,0);assert.equal(JSON.stringify(a.api.getData()),before);assert.equal(a.api.techSheetSession().draft.id,id);
+ a.setWriteErrorKey(null);fillSyntheticTechSheet(a);a.node('tech-form').onsubmit({preventDefault(){}});assert.equal(a.api.techSheetSession().phase,'confirm');
+ const confirm=a.node('tech-confirm').onclick;oldConfirm();confirm();confirm();await a.flush();
+ assert.equal(a.rpcs.length,1);assert.equal(a.rpcs[0].args.p_expected_revision,39);assert.equal(a.getRemote().data.settings.techSheets['507'].versions.length,2);assert.equal(a.getRemote().data.settings.techSheets['507'].versions[1].id,id);assert.equal(a.online().hasPending(),false);
+});
+for(const [point,change] of [['open','missing'],['review','missing'],['review','changed'],['confirm','missing'],['confirm','changed']])test(`technical sheet confirmed base ${change} at ${point} blocks persistence`,async()=>{
+ const initial=syntheticTechSheetRow(),a=app({remote:initial,session:authenticated});await a.ready();
+ const original=a.online().getAdjustmentBase,invalidate=()=>{a.online().getAdjustmentBase=change==='missing'?()=>null:()=>({...original(),syntheticConfirmedChange:true})};
+ if(point==='open'){a.api.settings();a.api.openTechSheet('m507');invalidate();a.node('tech-new').onclick();assert.equal(a.api.techSheetSession().phase,'view')}
+ else if(point==='review'){editSyntheticTechSheet(a);invalidate();a.node('tech-form').onsubmit({preventDefault(){}});assert.equal(a.api.techSheetSession(),null)}
+ else{const confirm=reviewSyntheticTechSheet(a);invalidate();confirm();assert.equal(a.api.techSheetSession(),null)}
+ await a.flush();assert.equal(a.rpcs.length,0);assert.equal(a.storage.has(PENDING),false);assert.equal(a.online().hasPending(),false);assert.deepEqual(a.getRemote().data,initial.data);
+});
+test('technical-sheet consultation, history, simulation, preview and cancellations issue zero writes or CAS',async()=>{
+ const initial=syntheticTechSheetRow(),a=app({remote:initial,session:authenticated});await a.ready();
+ const before=JSON.stringify(a.api.getData()),raw=JSON.stringify(a.getRemote().data),writes=a.writes.length;
+ for(let count=0;count<2;count++){
+  a.api.settings();a.api.openTechSheet('m507');a.node('tech-history').value='synthetic-tech-before';a.node('tech-history').onchange();
+  a.node('tech-simulate').onclick();a.node('tech-sim-sale').value='9,876';a.node('tech-sim-sale').oninput();
+  assert.match(a.node('tech-sim-result').innerHTML,/Diferença de custo/);a.node('tech-sim-back').onclick();a.api.closeModal();
+  editSyntheticTechSheet(a);a.api.closeModal();
+  const abandoned=reviewSyntheticTechSheet(a);a.api.closeModal();abandoned();
+ }
+ await a.flush();assert.equal(a.rpcs.length,0);assert.equal(a.writes.length,writes);assert.equal(a.storage.has(PENDING),false);
+ assert.equal(JSON.stringify(a.api.getData()),before);assert.equal(JSON.stringify(a.getRemote().data),raw);
+});
+test('technical-sheet read and canceled first draft never initialize an absent collection',async()=>{
+ const initial=syntheticTechSheetRow(false),a=app({remote:initial,session:authenticated});await a.ready();const before=JSON.stringify(a.api.getData()),writes=a.writes.length;
+ for(let count=0;count<3;count++){a.api.settings();a.api.openTechSheet('m507');a.node('tech-new').onclick();a.api.closeModal()}
+ await a.flush();assert.equal(a.rpcs.length,0);assert.equal(a.writes.length,writes);assert.equal(JSON.stringify(a.api.getData()),before);
+ assert.equal(Object.hasOwn(a.api.getData().settings,'techSheets'),false);assert.equal(Object.hasOwn(a.getRemote().data.settings,'techSheets'),false);
+});
+
+// Same-date technical-sheet corrections use the same durable queue and CAS.
+// Every fixture is synthetic, and original versions remain byte-for-byte intact.
+function editSyntheticTechCorrection(a,{sale='8,765',qty='0.875'}={}){
+ a.api.settings();a.api.openTechSheet('m507');
+ assert.match(a.node('modal-sheet').innerHTML,/id="tech-correct"/);fillSyntheticTechSheet(a,{date:'2026-10-01',sale,qty});a.node('tech-correct').onclick();
+ const session=a.api.techSheetSession();assert.equal(session?.phase,'edit');
+ assert.equal(session.draft.validFrom,'2026-10-01');assert.equal(Object.hasOwn(session.draft,'correctedAt'),false);
+ fillSyntheticTechSheet(a,{date:'2026-10-01',sale,qty});return session;
+}
+function reviewSyntheticTechCorrection(a,options={}){
+ editSyntheticTechCorrection(a,options);a.node('tech-form').onsubmit({preventDefault(){}});
+ assert.equal(a.api.techSheetSession()?.phase,'confirm',a.node('tech-error').textContent);
+ return a.node('tech-confirm').onclick;
+}
+for(const mode of ['success','pending-quota','cache-quota','conflict','lost-response','guard-reject'])test(`technical-sheet correction CAS ${mode} appends one same-date record without rewriting originals`,async()=>{
+ const initial=syntheticTechSheetRow(),a=app({remote:initial,session:authenticated});await a.ready();
+ const before=clone(a.api.getData()),cache=a.storage.get(STORAGE),confirm=reviewSyntheticTechCorrection(a),draft=clone(a.api.techSheetSession().draft),confirmedAt='2026-10-08T01:09:00.000Z';
+ assert.equal(draft.supersedesVersionId,'synthetic-tech-before');assert.equal(Object.hasOwn(draft,'correctedAt'),false);a.clock.set(confirmedAt);
+ if(mode==='pending-quota')a.setWriteErrorKey(PENDING);if(mode==='cache-quota')a.setWriteErrorKey(STORAGE);
+ confirm();confirm();
+ if(mode==='pending-quota'){
+  assert.deepEqual(clone(a.api.getData()),before);assert.equal(a.storage.get(STORAGE),cache);assert.equal(a.online().hasPending(),false);assert.equal(a.storage.has(PENDING),false);
+  assert.equal(a.api.techSheetSession()?.phase,'edit');assert.equal(a.api.techSheetSession()?.draft.id,draft.id);assert.equal(a.api.techSheetSession()?.draft.supersedesVersionId,draft.supersedesVersionId);
+  await a.flush();assert.equal(a.rpcs.length,0);assert.deepEqual(a.getRemote().data,initial.data);return;
+ }
+ const pending=JSON.parse(a.storage.get(PENDING)),candidate=pending.data,history=candidate.settings.techSheets['507'].versions,correction=history[1];
+ assert.equal(pending.baseRevision,39);assert.equal(pending.hydrated,true);assert.equal(pending.localVersion,1);assert.equal(a.online().hasPending(),true);assert.equal(a.node('modal').hidden,true);
+ assert.equal(history.length,2);assert.equal(correction.id,draft.id);assert.equal(correction.validFrom,'2026-10-01');assert.equal(correction.supersedesVersionId,'synthetic-tech-before');
+ assert.equal(correction.createdAt,draft.createdAt);assert.equal(correction.correctedAt,confirmedAt);assert.notEqual(correction.correctedAt,correction.createdAt);
+ assert.equal(correction.salePriceMills,8765);assert.equal(correction.items[0].qtyPerPair,'0.875');
+ assert.equal(JSON.stringify(history[0]),JSON.stringify(initial.data.settings.techSheets['507'].versions[0]));
+ assert.deepEqual(withoutTechSheetChange(candidate,initial.data),initial.data);assert.deepEqual(candidate.settings.techSheets['512'],initial.data.settings.techSheets['512']);
+ assert.deepEqual(correction.syntheticMetadata,{preserve:['version']});assert.deepEqual(correction.items[0].syntheticMetadata,{preserve:['item']});assert.deepEqual(correction.items[0].colorMap,{'Azul fictício':'Informação preservada'});
+ assert.equal(require('../tech-sheet').applicableVersion(candidate,'507','2026-10-07').id,draft.id);
+ if(mode==='cache-quota')assert.equal(a.storage.get(STORAGE),cache);
+ if(mode==='conflict'){const newer=clone(initial);newer.revision=40;newer.data.syntheticConcurrentCorrection=true;a.setRemote(newer)}
+ if(mode==='guard-reject')a.setRpc(()=>({data:null,error:{code:'23514',message:'Synthetic correction guard refusal'}}));
+ if(mode==='lost-response')a.setRpc((_name,args)=>{a.setRemote({data:clone(args.p_data),revision:40});throw Error('Synthetic correction response lost after commit')});
+ await a.flush();if(mode==='lost-response'){assert.equal(a.online().hasPending(),true);a.setRpc(null);await a.flush()}
+ assert.equal(a.rpcs.length,1);assert.equal(a.rpcs[0].name,'save_app_state');assert.equal(a.rpcs[0].args.p_expected_revision,39);assert.deepEqual(a.rpcs[0].args.p_data,candidate);
+ if(mode==='conflict'||mode==='guard-reject'){
+  assert.equal(a.online().hasPending(),true);assert.deepEqual(a.getRemote().data.settings.techSheets,initial.data.settings.techSheets);assert.deepEqual(JSON.parse(a.storage.get(PENDING)).data,candidate);
+  if(mode==='conflict'){assert.equal(a.online().conflict(),true);assert.equal(a.storage.has(CONFLICT),true);assert.equal(a.getRemote().data.syntheticConcurrentCorrection,true)}
+ }else{assert.equal(a.online().hasPending(),false);assert.equal(a.storage.has(PENDING),false);assert.deepEqual(a.getRemote().data,candidate)}
+});
+for(const behavior of ['false','throw'])test(`technical-sheet correction save ${behavior} rolls back state and supports one reviewed retry`,async()=>{
+ const initial=syntheticTechSheetRow(),a=app({remote:initial,session:authenticated});await a.ready();
+ const previous=a.api.getData(),before=JSON.stringify(previous),cache=a.storage.get(STORAGE),writes=a.writes.length,oldConfirm=reviewSyntheticTechCorrection(a),id=a.api.techSheetSession().draft.id;
+ const restore=a.api.overrideSaveForTest(behavior);oldConfirm();oldConfirm();await a.flush();
+ assert.equal(a.api.getData(),previous);assert.equal(JSON.stringify(a.api.getData()),before);assert.equal(a.storage.get(STORAGE),cache);assert.equal(a.writes.length,writes);assert.equal(a.storage.has(PENDING),false);assert.equal(a.rpcs.length,0);
+ assert.equal(a.api.techSheetSession()?.phase,'edit');assert.equal(a.api.techSheetSession()?.draft.id,id);assert.equal(a.node('modal').hidden,false);
+ restore();fillSyntheticTechSheet(a,{date:'2026-10-01',sale:'8,765',qty:'0.875'});a.node('tech-form').onsubmit({preventDefault(){}});
+ assert.equal(a.api.techSheetSession().phase,'confirm');const retry=a.node('tech-confirm').onclick,confirmedAt='2026-10-08T01:19:00.000Z';a.clock.set(confirmedAt);oldConfirm();retry();retry();await a.flush();
+ assert.equal(a.rpcs.length,1);assert.equal(a.getRemote().data.settings.techSheets['507'].versions.length,2);assert.equal(a.getRemote().data.settings.techSheets['507'].versions[1].id,id);assert.equal(a.getRemote().data.settings.techSheets['507'].versions[1].correctedAt,confirmedAt);assert.equal(a.online().hasPending(),false);
+});
+test('technical-sheet correction CAS preserves raw JSON, absent defaults and unknown metadata',async()=>{
+ const initial=syntheticTechSheetRow();initial.data.settings.models[0].syntheticMetadata={keep:['model',8]};initial.data.settings.mountings[0].syntheticMetadata={keep:['mounting',9]};
+ for(const field of ['cabedalCost','totalCost','usesPalmilha'])delete initial.data.settings.models[0][field];
+ delete initial.data.settings.workDays;delete initial.data.settings.sheetPatterns;delete initial.data.settings.mountingRateHistory;initial.data.weeks={};initial.data.onboardingDone=true;
+ const a=app({remote:initial,session:authenticated,now:'2026-10-13T01:00:00Z'});await a.ready();a.api.closeModal();const confirm=reviewSyntheticTechCorrection(a);confirm();confirm();await a.flush();
+ assert.equal(a.rpcs.length,1);const candidate=a.rpcs[0].args.p_data,original=initial.data.settings.techSheets['507'].versions[0];
+ assert.deepEqual(withoutTechSheetChange(candidate,initial.data),initial.data);assert.equal(JSON.stringify(candidate.settings.techSheets['507'].versions[0]),JSON.stringify(original));
+ assert.equal(Object.hasOwn(candidate.settings,'workDays'),false);assert.equal(Object.hasOwn(candidate.settings,'sheetPatterns'),false);assert.equal(Object.hasOwn(candidate.settings.models[0],'cabedalCost'),false);assert.deepEqual(candidate.weeks,{});
+});
+test('sequential correction CAS commits create one linear chain and select only its final leaf',async()=>{
+ const initial=syntheticTechSheetRow(),a=app({remote:initial,session:authenticated});await a.ready();
+ const first=reviewSyntheticTechCorrection(a),firstId=a.api.techSheetSession().draft.id;first();first();await a.flush();const firstHistory=clone(a.getRemote().data.settings.techSheets['507'].versions);
+ a.clock.set('2026-10-08T01:20:00.000Z');const second=reviewSyntheticTechCorrection(a,{sale:'9,876',qty:'1.250'}),secondId=a.api.techSheetSession().draft.id;
+ assert.equal(a.api.techSheetSession().draft.supersedesVersionId,firstId);second();second();first();await a.flush();
+ const final=a.getRemote().data,history=final.settings.techSheets['507'].versions;assert.equal(a.rpcs.length,2);assert.equal(a.rpcs[0].args.p_expected_revision,39);assert.equal(a.rpcs[1].args.p_expected_revision,40);
+ assert.equal(history.length,3);assert.equal(JSON.stringify(history.slice(0,2)),JSON.stringify(firstHistory));assert.equal(history[2].supersedesVersionId,firstId);assert.equal(history[2].id,secondId);assert.equal(history[2].validFrom,'2026-10-01');
+ assert.equal(require('../tech-sheet').applicableVersion(final,'507','2026-10-07').id,secondId);assert.equal(require('../tech-sheet').calculateTechSheet(final,{ref:'507',date:'2026-10-07'}).salePriceMills,9876);assert.equal(a.online().hasPending(),false);
+});
+for(const change of ['remote','logout'])test(`technical-sheet correction ${change} invalidates stale confirmation without any CAS`,async()=>{
+ const initial=syntheticTechSheetRow(),a=app({remote:initial,session:authenticated});await a.ready();const oldConfirm=reviewSyntheticTechCorrection(a),before=JSON.stringify(a.api.getData());let expected=initial.data;
+ if(change==='remote'){
+  const incoming=clone(initial),original=incoming.data.settings.techSheets['507'].versions[0];incoming.revision=40;incoming.data.syntheticIncoming='remote correction';incoming.data.settings.techSheets['507'].versions.push({...clone(original),id:'synthetic-incoming-correction',supersedesVersionId:original.id,createdAt:'2026-10-08T00:50:00.000Z',correctedAt:'2026-10-08T00:55:00.000Z',salePriceMills:8888});
+  expected=incoming.data;a.emit(incoming);
+ }else a.signOut();
+ assert.equal(a.api.techSheetSession(),null);assert.equal(a.node('modal').hidden,true);oldConfirm();oldConfirm();await a.flush();assert.equal(a.rpcs.length,0);assert.equal(a.storage.has(PENDING),false);assert.deepEqual(a.getRemote().data,expected);
+ if(change==='logout')assert.equal(JSON.stringify(a.api.getData()),before);else assert.equal(a.api.getData().syntheticIncoming,'remote correction');
+});
+for(const [point,change] of [['open','missing'],['review','missing'],['review','changed'],['confirm','missing'],['confirm','changed']])test(`technical-sheet correction confirmed base ${change} at ${point} blocks persistence`,async()=>{
+ const initial=syntheticTechSheetRow(),a=app({remote:initial,session:authenticated});await a.ready();const original=a.online().getAdjustmentBase;
+ const invalidate=()=>{a.online().getAdjustmentBase=change==='missing'?()=>null:()=>({...original(),syntheticConfirmedCorrectionChange:true})};
+ if(point==='open'){a.api.settings();a.api.openTechSheet('m507');invalidate();a.node('tech-correct').onclick();assert.equal(a.api.techSheetSession().phase,'view')}
+ else if(point==='review'){editSyntheticTechCorrection(a);invalidate();a.node('tech-form').onsubmit({preventDefault(){}});assert.equal(a.api.techSheetSession(),null)}
+ else{const confirm=reviewSyntheticTechCorrection(a);invalidate();confirm();assert.equal(a.api.techSheetSession(),null)}
+ await a.flush();assert.equal(a.rpcs.length,0);assert.equal(a.storage.has(PENDING),false);assert.equal(a.online().hasPending(),false);assert.deepEqual(a.getRemote().data,initial.data);
+});
+test('technical-sheet correction preview and cancel preserve data and issue no queue writes or CAS',async()=>{
+ const initial=syntheticTechSheetRow(),a=app({remote:initial,session:authenticated});await a.ready();const before=JSON.stringify(a.api.getData()),writes=a.writes.length;
+ editSyntheticTechCorrection(a);a.api.closeModal();const oldConfirm=reviewSyntheticTechCorrection(a);a.api.closeModal();oldConfirm();await a.flush();
+ assert.equal(a.rpcs.length,0);assert.equal(a.writes.length,writes);assert.equal(a.storage.has(PENDING),false);assert.equal(JSON.stringify(a.api.getData()),before);assert.deepEqual(a.getRemote().data,initial.data);
+});
+
+test('technical-sheet correction confirmation is invalidated when a future version becomes current at Sao Paulo midnight',async()=>{
+ const initial=syntheticTechSheetRow(),original=initial.data.settings.techSheets['507'].versions[0];
+ initial.data.settings.techSheets['507'].versions.push({...clone(original),id:'synthetic-next-day-version',validFrom:'2026-10-08',createdAt:'2026-10-07T15:00:00.000Z',salePriceMills:9999});
+ const a=app({remote:initial,session:authenticated,now:'2026-10-08T02:59:59.000Z'});await a.ready();
+ const confirm=reviewSyntheticTechCorrection(a),before=JSON.stringify(a.api.getData()),writes=a.writes.length;a.clock.set('2026-10-08T03:00:00.000Z');confirm();confirm();await a.flush();
+ assert.equal(a.rpcs.length,0);assert.equal(a.writes.length,writes);assert.equal(a.storage.has(PENDING),false);assert.equal(a.api.techSheetSession(),null);assert.equal(a.node('modal').hidden,true);
+ assert.equal(JSON.stringify(a.api.getData()),before);assert.deepEqual(a.getRemote().data,initial.data);
+});
+for(const guard of ['hasPending','conflict'])test(`technical-sheet correction ${guard} appearing after review blocks confirmation without CAS`,async()=>{
+ const initial=syntheticTechSheetRow(),a=app({remote:initial,session:authenticated});await a.ready();const confirm=reviewSyntheticTechCorrection(a),before=JSON.stringify(a.api.getData()),writes=a.writes.length;
+ a.online()[guard]=()=>true;confirm();confirm();await a.flush();
+ assert.equal(a.rpcs.length,0);assert.equal(a.writes.length,writes);assert.equal(a.storage.has(PENDING),false);assert.equal(a.api.techSheetSession(),null);assert.equal(JSON.stringify(a.api.getData()),before);assert.deepEqual(a.getRemote().data,initial.data);
+});
