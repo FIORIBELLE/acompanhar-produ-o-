@@ -149,7 +149,7 @@ test('fulfillment and price parser are loaded before sales bootstrap and include
  for(const filename of ['order-fulfillment.js?v=28','sales-order.js?v=28']){
  assert.ok(html.includes('<script src="'+filename+'"></script>'));assert.ok(sw.includes('"./'+filename+'"'));
  assert.ok(html.indexOf(filename)<html.indexOf('function salesControlBootstrap'));
- }assert.match(sw,/shell-v42/);
+ }assert.match(sw,/shell-v43/);
 });
 
 test('projection-only inventory divergence is explained locally instead of pointing to an absent dashboard warning',()=>{

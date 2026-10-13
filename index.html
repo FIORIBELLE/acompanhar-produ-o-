@@ -249,8 +249,8 @@ footer{color:var(--soft);font-size:.78rem;text-align:center;padding:8px 0 24px}
 <script src="stock-adjustment.js?v=35"></script>
 <script src="general-dashboard.js?v=36"></script>
 <script src="material-catalog.js?v=40"></script>
-<script src="tech-sheet.js?v=42"></script>
-<script src="tech-sheet-ui.js?v=42"></script>
+<script src="tech-sheet.js?v=43"></script>
+<script src="tech-sheet-ui.js?v=43"></script>
 <script>
 "use strict";
 const STORAGE_KEY="acompanhar_producao_v2";
@@ -1003,6 +1003,17 @@ function materialReferenceWarning(base,materialId){
   if(!object(sheets))return "Não foi possível conferir referências nas fichas técnicas. Confira os vínculos antes de desativar.";
   for(const [key,sheet]of Object.entries(sheets)){
     if(!object(sheet)||typeof sheet.ref!=='string'||sheet.ref!==key||!Array.isArray(sheet.versions)){unknown=true;continue}
+    // Correction links share the technical-sheet engine's selection rule.
+    // This remains a read-only warning; catalog writes and prices are unchanged.
+    if(sheet.versions.some(version=>object(version)&&(Object.hasOwn(version,'supersedesVersionId')||Object.hasOwn(version,'correctedAt')))){
+      try{
+        if(typeof FioriTechSheets==='undefined')throw new Error('missing_engine');
+        const current=FioriTechSheets.applicableVersion(base,sheet.ref,today);
+        if(current&&(!Array.isArray(current.items)||current.items.some(item=>!object(item)||typeof item.materialId!=='string'||!item.materialId)))throw new Error('invalid_items');
+        if(current?.items.some(item=>item.materialId===materialId))refs.push(sheet.ref);
+      }catch(_){unknown=true}
+      continue;
+    }
     const dates=new Set();let current=null,valid=true;
     for(const version of sheet.versions){
       if(!object(version)||!FioriMaterials.validDate(version.validFrom)||dates.has(version.validFrom)||!Array.isArray(version.items)||version.items.some(item=>!object(item)||typeof item.materialId!=='string'||!item.materialId)){valid=false;break}
@@ -1102,13 +1113,17 @@ function materialConfirm(attempt,input,errorMessage=""){
 }
 
 // Technical-sheet UI: drafts and simulations stay local until explicit confirmation.
-function refreshTechSheetAvailability(){const button=document.getElementById('tech-new');if(button&&techSheetSession?.phase==='view')button.disabled=assemblyBusy()}
+function refreshTechSheetAvailability(){if(techSheetSession?.phase!=='view')return;for(const id of ['tech-new','tech-correct']){const button=document.getElementById(id);if(button)button.disabled=assemblyBusy()}}
 function invalidateTechSheetDialog(){if(techSheetSession)closeModal()}
 function techSheetCurrent(session,version){return techSheetSession===session&&ui.tab==='settings'&&session.generation===mountingSettingsGeneration&&goalDialogVersion===version&&!document.getElementById('modal').hidden}
 function techSheetReady(session){
   if(assemblyBusy()||JSON.stringify(data)!==session.fingerprint){closeModal();showToast('Os dados mudaram ou aguardam sincronização. Reabra a ficha após a confirmação online.');return false}
   const base=materialConfirmedBase();
   if(!base||JSON.stringify(base)!==session.baseFingerprint){closeModal();showToast('A base online mudou ou ainda não está confirmada. Reabra a ficha após sincronizar.');return false}
+  if(session.correction){
+    try{if(FioriTechSheets.applicableVersion(base,session.ref,spDate())?.id!==session.correctionTargetId)throw new Error('A versão vigente mudou. Reabra a ficha antes de corrigir.')}
+    catch(error){closeModal();showToast(error.message);return false}
+  }
   return true;
 }
 function techSheetSections(base,ref,version,result){
@@ -1132,13 +1147,15 @@ function techSheetView(session){
   try{versions=FioriTechSheetUI.history(data,session.ref);current=FioriTechSheets.applicableVersion(data,session.ref,spDate());selected=session.selectedId?versions.find(row=>row.id===session.selectedId):current}
   catch(error){closeModal();showToast(error.message);return}
   session.selectedId=selected?.id||null;
+  const successors=new Map(versions.filter(row=>row.supersedesVersionId).map(row=>[row.supersedesVersionId,row])),correctedBy=selected?successors.get(selected.id):null;
   const date=selected?(selected.id===current?.id?spDate():selected.validFrom):spDate();session.date=date;
   const result=selected?FioriTechSheetUI.project(data,session.ref,selected,date):FioriTechSheets.calculateTechSheet(data,{ref:session.ref,date});
   session.baseVersion=selected?clone(selected):null;
-  showModal(`<h2 id="modal-title">Ficha técnica · Ref. ${esc(session.ref)}</h2><p class="sub">${esc(session.name)} · ${selected?(selected.id===current?.id?'Versão vigente':'Versão anterior ou futura · somente leitura'):'Nenhuma ficha vigente cadastrada'}</p><div class="field"><label for="tech-history">Versões salvas · somente leitura</label><select id="tech-history"><option value="">${current?'Selecionar a vigente':'Sem versão vigente'}</option>${versions.map(row=>`<option value="${esc(row.id)}">Desde ${fmtDate(row.validFrom)}${row.id===current?.id?' · vigente':row.validFrom>spDate()?' · futura':' · anterior'}</option>`).join('')}</select></div>${selected?`<p class="sub">Vigência desde ${fmtDate(selected.validFrom)} · preços consultados em ${fmtDate(date)}. O histórico guarda a composição; os preços são consultados no catálogo para esta data.</p>${selected.note?`<p>${esc(selected.note)}</p>`:''}${techSheetSections(data,session.ref,selected,result)}`:'<p class="empty">Monte sua ficha escolhendo os materiais ativos do catálogo. Nenhum consumo ou preço foi preenchido automaticamente.</p>'+techSheetSections(data,session.ref,null,result)}<div class="button-row"><button class="btn" type="button" data-modal-close>Fechar</button><button class="btn primary" type="button" id="tech-new" ${assemblyBusy()?'disabled':''}>${current?'Nova versão':'Montar ficha'}</button>${selected?'<button class="btn" type="button" id="tech-simulate">Simular sem salvar</button><button class="btn" type="button" id="tech-share">Texto para WhatsApp</button>':''}<button class="btn" type="button" id="tech-grid">Grade em Ajustes</button></div><p class="sub">Nova versão copia a ficha vigente para edição. Versões salvas não podem ser editadas nem apagadas.</p>`,'tech-sheet');
+  showModal(`<h2 id="modal-title">Ficha técnica · Ref. ${esc(session.ref)}</h2><p class="sub">${esc(session.name)} · ${selected?(selected.id===current?.id?'Versão vigente':'Versão anterior ou futura · somente leitura'):'Nenhuma ficha vigente cadastrada'}</p><div class="field"><label for="tech-history">Versões salvas · somente leitura</label><select id="tech-history"><option value="">${current?'Selecionar a vigente':'Sem versão vigente'}</option>${versions.map(row=>`<option value="${esc(row.id)}">Desde ${fmtDate(row.validFrom)}${successors.has(row.id)?' · corrigida em '+materialCorrectionDate(successors.get(row.id).correctedAt):row.id===current?.id?' · vigente':row.validFrom>spDate()?' · futura':' · anterior'}${row.supersedesVersionId?' · correção':''}</option>`).join('')}</select></div>${selected?`<p class="sub">Vigência desde ${fmtDate(selected.validFrom)} · preços consultados em ${fmtDate(date)}. O histórico guarda a composição; os preços são consultados no catálogo para esta data.</p>${correctedBy?`<p class="notice">Corrigida em ${esc(materialCorrectionDate(correctedBy.correctedAt))}. Esta versão original permanece somente leitura.</p>`:''}${selected.correctedAt?`<p class="sub">Correção registrada em ${esc(materialCorrectionDate(selected.correctedAt))}.</p>`:''}${selected.note?`<p>${esc(selected.note)}</p>`:''}${techSheetSections(data,session.ref,selected,result)}`:'<p class="empty">Monte sua ficha escolhendo os materiais ativos do catálogo. Nenhum consumo ou preço foi preenchido automaticamente.</p>'+techSheetSections(data,session.ref,null,result)}<div class="button-row"><button class="btn" type="button" data-modal-close>Fechar</button><button class="btn primary" type="button" id="tech-new" ${assemblyBusy()?'disabled':''}>${current?'Nova versão':'Montar ficha'}</button>${selected?.id===current?.id&&selected?`<button class="btn" type="button" id="tech-correct" ${assemblyBusy()?'disabled':''}>Corrigir esta versão</button>`:''}${selected?'<button class="btn" type="button" id="tech-simulate">Simular sem salvar</button><button class="btn" type="button" id="tech-share">Texto para WhatsApp</button>':''}<button class="btn" type="button" id="tech-grid">Grade em Ajustes</button></div><p class="sub">Nova versão copia a ficha vigente para edição. Corrigir acrescenta uma substituta na mesma data; os registros salvos nunca são editados ou apagados.</p>`,'tech-sheet');
   const version=goalDialogVersion,history=document.getElementById('tech-history');history.value=session.selectedId||'';
   history.onchange=()=>{if(!techSheetCurrent(session,version))return;session.selectedId=history.value||null;techSheetView(session)};
   document.getElementById('tech-new').onclick=()=>{if(techSheetCurrent(session,version))techSheetEdit(session)};
+  if(selected?.id===current?.id&&selected)document.getElementById('tech-correct').onclick=()=>{if(techSheetCurrent(session,version))techSheetEdit(session,true)};
   document.getElementById('tech-grid').onclick=()=>{if(!techSheetCurrent(session,version))return;closeModal();openSheetPattern({ref:session.ref,line:session.line})};
   if(selected){
     document.getElementById('tech-simulate').onclick=()=>{if(techSheetCurrent(session,version))techSheetSimulation(session)};
@@ -1146,13 +1163,15 @@ function techSheetView(session){
   }
   history.focus?.();
 }
-function techSheetEdit(session){
+function techSheetEdit(session,correction=false){
   if(assemblyBusy()){showToast('Aguarde a confirmação da base online antes de montar a ficha.');return}
   const base=materialConfirmedBase();if(!base){showToast('Aguarde a base online confirmar os dados.');return}
   try{
     const issue=FioriMaterials.validateCatalog(base)[0];if(issue)throw new Error(issue.message);
-    const version=FioriTechSheetUI.draft(base,session.ref,spDate(),uid('ficha-tecnica'),new Date().toISOString());
-    const attempt={...session,phase:'edit',base,fingerprint:JSON.stringify(data),baseFingerprint:JSON.stringify(base),draft:version,sale:!Number.isSafeInteger(version.salePriceMills)||version.salePriceMills<0?'':FioriMaterials.formatPriceMills(version.salePriceMills).replace(/\./g,'')};
+    const current=FioriTechSheets.applicableVersion(base,session.ref,spDate());
+    if(correction&&(!current||current.id!==session.selectedId))throw new Error('Selecione a versão vigente para corrigir.');
+    const id=uid('ficha-tecnica'),createdAt=new Date().toISOString(),version=correction?FioriTechSheetUI.draftCorrection(base,session.ref,current.id,id,createdAt):FioriTechSheetUI.draft(base,session.ref,spDate(),id,createdAt);
+    const attempt={...session,phase:'edit',correction,correctionTargetId:correction?current.id:null,baseVersion:current,base,fingerprint:JSON.stringify(data),baseFingerprint:JSON.stringify(base),draft:version,sale:!Number.isSafeInteger(version.salePriceMills)||version.salePriceMills<0?'':FioriMaterials.formatPriceMills(version.salePriceMills).replace(/\./g,'')};
     techSheetForm(attempt);
   }catch(error){showToast(error.message)}
 }
@@ -1175,10 +1194,11 @@ function techReadForm(attempt){
   attempt.draft.sizeGroups=attempt.draft.items.some(item=>item.qtyBySizeGroup)?['35-37','38-39']:[];
 }
 function techDraftVersion(attempt){return {...clone(attempt.draft),salePriceMills:FioriMaterials.parsePriceMills(attempt.sale)}}
+function techSheetCandidate(attempt,draft,now=new Date().toISOString()){return attempt.correction?FioriTechSheetUI.correctVersion(attempt.base,attempt.ref,{...draft,correctedAt:now}):FioriTechSheetUI.appendVersion(attempt.base,attempt.ref,draft)}
 function techSheetForm(attempt,errorMessage=''){
   attempt.phase='edit';techSheetSession=attempt;
   const rows=attempt.draft.items.map((item,index)=>`<fieldset class="tech-item"><legend>Item ${index+1}</legend><div class="field"><label for="tech-material-${index}">Material ativo</label><select id="tech-material-${index}" required>${techMaterialOptions(attempt.base,item.materialId)}</select></div><div class="field"><label for="tech-label-${index}">Parte ou identificação (opcional)</label><input id="tech-label-${index}" value="${esc(item.label||'')}" maxlength="200"></div><div class="field"><label for="tech-mode-${index}">Consumo por par</label><select id="tech-mode-${index}"><option value="single">Quantidade única</option><option value="groups">Por faixas 35–37 e 38–39</option></select></div><div id="tech-single-${index}" ${item.qtyBySizeGroup?'hidden':''}><div class="field"><label for="tech-qty-${index}">Quantidade única</label><input id="tech-qty-${index}" inputmode="decimal" value="${esc(item.qtyPerPair||'')}"></div></div><div class="form-grid" id="tech-groups-${index}" ${item.qtyBySizeGroup?'':'hidden'}><div class="field"><label for="tech-qty-a-${index}">Quantidade 35–37</label><input id="tech-qty-a-${index}" inputmode="decimal" value="${esc(item.qtyBySizeGroup?.['35-37']||'')}"></div><div class="field"><label for="tech-qty-b-${index}">Quantidade 38–39</label><input id="tech-qty-b-${index}" inputmode="decimal" value="${esc(item.qtyBySizeGroup?.['38-39']||'')}"></div></div><p class="sub" id="tech-unit-${index}"></p><button class="btn small" type="button" data-tech-remove="${index}">Remover item do rascunho</button></fieldset>`).join('');
-  showModal(`<h2 id="modal-title">${attempt.baseVersion?'Nova versão':'Montar ficha'} · Ref. ${esc(attempt.ref)}</h2><p class="sub">Rascunho em memória. Selecione materiais ativos e informe as quantidades por par com até três casas decimais. Preços ausentes ficam a conferir.</p><form id="tech-form" novalidate><div class="form-grid"><div class="field"><label for="tech-date">Data inicial da versão</label><input id="tech-date" type="date" required value="${esc(attempt.draft.validFrom)}"></div><div class="field"><label for="tech-sale">Venda por par (R$)</label><input id="tech-sale" inputmode="decimal" required value="${esc(attempt.sale)}"></div></div>${rows||'<p class="empty">Nenhum item no rascunho.</p>'}<button class="btn" type="button" id="tech-add">Adicionar material</button><div class="field"><label for="tech-note">Observação (opcional)</label><textarea id="tech-note" maxlength="1000">${esc(attempt.draft.note||'')}</textarea></div><p id="tech-error" class="notice" role="alert" tabindex="-1" ${errorMessage?'':'hidden'}>${esc(errorMessage)}</p><details><summary>Prévia da ficha (sem salvar)</summary><div id="tech-preview" aria-live="polite"></div></details><div class="button-row"><button class="btn" type="button" data-modal-close>Cancelar</button><button class="btn primary" type="submit">Revisar versão</button></div></form>`,'tech-sheet');
+  showModal(`<h2 id="modal-title">${attempt.correction?'Corrigir versão':attempt.baseVersion?'Nova versão':'Montar ficha'} · Ref. ${esc(attempt.ref)}</h2><p class="sub">Rascunho em memória. Selecione materiais ativos e informe as quantidades por par com até três casas decimais. Preços ausentes ficam a conferir.</p>${attempt.correction?'<p class="notice">A correção mantém a data inicial. Será criado um novo registro vinculado à versão vigente; o original ficará no histórico marcado como corrigido.</p>':''}<form id="tech-form" novalidate><div class="form-grid"><div class="field"><label for="tech-date">Data inicial da versão</label><input id="tech-date" type="date" required ${attempt.correction?'readonly':''} value="${esc(attempt.draft.validFrom)}"></div><div class="field"><label for="tech-sale">Venda por par (R$)</label><input id="tech-sale" inputmode="decimal" required value="${esc(attempt.sale)}"></div></div>${rows||'<p class="empty">Nenhum item no rascunho.</p>'}<button class="btn" type="button" id="tech-add">Adicionar material</button><div class="field"><label for="tech-note">Observação (opcional)</label><textarea id="tech-note" maxlength="1000">${esc(attempt.draft.note||'')}</textarea></div><p id="tech-error" class="notice" role="alert" tabindex="-1" ${errorMessage?'':'hidden'}>${esc(errorMessage)}</p><details><summary>Prévia da ficha (sem salvar)</summary><div id="tech-preview" aria-live="polite"></div></details><div class="button-row"><button class="btn" type="button" data-modal-close>Cancelar</button><button class="btn primary" type="submit">${attempt.correction?'Revisar correção':'Revisar versão'}</button></div></form>`,'tech-sheet');
   const version=goalDialogVersion;document.getElementById('tech-note').value=attempt.draft.note||'';
   attempt.draft.items.forEach((item,index)=>{document.getElementById('tech-material-'+index).value=item.materialId;document.getElementById('tech-mode-'+index).value=item.qtyBySizeGroup?'groups':'single'});
   function update(){
@@ -1192,21 +1212,21 @@ function techSheetForm(attempt,errorMessage=''){
   document.querySelectorAll('[data-tech-remove]').forEach(button=>button.onclick=()=>{if(!techSheetCurrent(attempt,version))return;techReadForm(attempt);attempt.draft.items.splice(Number(button.dataset.techRemove),1);techSheetForm(attempt)});
   document.getElementById('tech-form').onsubmit=event=>{
     event.preventDefault();if(!techSheetCurrent(attempt,version)||attempt.phase!=='edit'||!techSheetReady(attempt))return;techReadForm(attempt);
-    try{const draft=techDraftVersion(attempt);FioriTechSheetUI.appendVersion(attempt.base,attempt.ref,draft);techSheetConfirm(attempt,draft)}catch(error){const alert=document.getElementById('tech-error');alert.textContent=error.message;alert.hidden=false;alert.focus?.()}
+    try{const draft=techDraftVersion(attempt);techSheetCandidate(attempt,draft);techSheetConfirm(attempt,draft)}catch(error){const alert=document.getElementById('tech-error');alert.textContent=error.message;alert.hidden=false;alert.focus?.()}
   };
-  update();document.getElementById(errorMessage?'tech-error':'tech-date').focus?.();
+  update();document.getElementById(errorMessage?'tech-error':attempt.correction?'tech-sale':'tech-date').focus?.();
 }
 function techSheetConfirm(attempt,draft){
   attempt.phase='confirm';techSheetSession=attempt;
   const result=FioriTechSheetUI.project(attempt.base,attempt.ref,draft,draft.validFrom);
   const next=FioriTechSheetUI.history(attempt.base,attempt.ref).filter(row=>row.validFrom>draft.validFrom).sort((a,b)=>a.validFrom.localeCompare(b.validFrom))[0];
-  showModal(`<h2 id="modal-title">Confirmar versão · Ref. ${esc(attempt.ref)}?</h2><p>Vigência desde ${fmtDate(draft.validFrom)}${next?' até '+fmtDate(addDays(next.validFrom,-1)):' em diante'}.${draft.validFrom>spDate()?' Esta vigência é futura.':''}</p><p class="notice">A nova versão será acrescentada ao histórico. As versões anteriores serão preservadas, somente leitura. ${result.issues.length?'Confira as pendências abaixo antes de confirmar.':''}</p>${techSheetSections(attempt.base,attempt.ref,draft,result)}<div class="button-row"><button class="btn" type="button" data-modal-close>Cancelar</button><button class="btn" type="button" id="tech-back">Voltar</button><button class="btn primary" type="button" id="tech-confirm">Confirmar versão</button></div>`,'tech-sheet');
+  showModal(`<h2 id="modal-title">${attempt.correction?'Confirmar correção':'Confirmar versão'} · Ref. ${esc(attempt.ref)}?</h2><p>Vigência desde ${fmtDate(draft.validFrom)}${next?' até '+fmtDate(addDays(next.validFrom,-1)):' em diante'}.${draft.validFrom>spDate()?' Esta vigência é futura.':''}</p><p class="notice">${attempt.correction?'A correção substituirá somente a versão vigente na mesma data inicial. O original e todas as correções anteriores serão preservados, somente leitura.':'A nova versão será acrescentada ao histórico. As versões anteriores serão preservadas, somente leitura.'} ${result.issues.length?'Confira as pendências abaixo antes de confirmar.':''}</p>${techSheetSections(attempt.base,attempt.ref,draft,result)}<div class="button-row"><button class="btn" type="button" data-modal-close>Cancelar</button><button class="btn" type="button" id="tech-back">Voltar</button><button class="btn primary" type="button" id="tech-confirm">${attempt.correction?'Confirmar correção':'Confirmar versão'}</button></div>`,'tech-sheet');
   const version=goalDialogVersion,confirm=document.getElementById('tech-confirm');let used=false;
   document.getElementById('tech-back').onclick=()=>{if(!used&&techSheetCurrent(attempt,version))techSheetForm(attempt)};
   confirm.onclick=()=>{
     if(used||!techSheetCurrent(attempt,version)||attempt.phase!=='confirm')return;used=true;confirm.disabled=true;if(!techSheetReady(attempt))return;
     try{
-      const next=FioriTechSheetUI.appendVersion(attempt.base,attempt.ref,draft),previous=data;
+      const next=techSheetCandidate(attempt,draft),previous=data;
       if(!persistCandidate(next,previous)){techSheetForm(attempt,'A versão não foi salva. Confira o espaço e a conexão; revise para tentar novamente.');return}
       data=loadData(next);closeModal();render();showToast(window.fioriOnline?.onlineMode?'Versão salva neste aparelho. Aguardando confirmação online.':'Versão salva neste aparelho.');
     }catch(error){techSheetForm(attempt,error.message)}

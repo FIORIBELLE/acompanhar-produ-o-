@@ -23,14 +23,30 @@
     const current=engine().applicableVersion(state,ref,date);
     identifier(id);
     if(current&&(!Array.isArray(current.items)||current.items.some(item=>!object(item))))fail('invalid_item','A ficha vigente contém itens inválidos. Solicite conferência antes de criar uma versão.');
-    return {...(current||{sizeGroups:[],items:[],note:''}),id,validFrom:'',createdAt};
+    const version={...(current||{sizeGroups:[],items:[],note:''}),id,validFrom:'',createdAt};
+    delete version.supersedesVersionId;delete version.correctedAt;return version;
   }
   function project(state,ref,version,date){
     if(!object(version))return engine().calculateTechSheet(state,{ref,date});
-    const projected={...state,settings:{...state.settings,techSheets:{[ref]:{ref,versions:[{...clone(version),validFrom:date}]}}}};
+    // A single-version projection is intentionally detached from its history.
+    // Drop only chain metadata in this ephemeral copy; stored rows stay intact.
+    const standalone={...clone(version),validFrom:date};delete standalone.supersedesVersionId;delete standalone.correctedAt;
+    const projected={...state,settings:{...state.settings,techSheets:{[ref]:{ref,versions:[standalone]}}}};
     return engine().calculateTechSheet(projected,{ref,date});
   }
+  function draftCorrection(state,ref,targetId,id,createdAt){
+    identifier(id);const rows=engine().versionHistory(state,ref),entry=rows.find(row=>row.version.id===targetId);
+    if(!entry)fail('invalid_correction_target','A versão corrigida não pertence ao histórico desta referência.');
+    if(entry.correctedBy)fail('stale_version','Esta versão já foi corrigida. Selecione a versão vigente.');
+    if(!Array.isArray(entry.version.items)||entry.version.items.some(item=>!object(item)))fail('invalid_item','A versão contém itens inválidos. Solicite conferência antes de corrigir.');
+    const version={...clone(entry.version),id,createdAt,supersedesVersionId:targetId};delete version.correctedAt;return version;
+  }
   function appendVersion(state,ref,version){
+    if(object(version)&&(Object.hasOwn(version,'supersedesVersionId')||Object.hasOwn(version,'correctedAt')))fail('correction_metadata','Use Corrigir esta versão para manter uma data inicial existente.');
+    return prepareVersion(state,ref,version,false);
+  }
+  function correctVersion(state,ref,version){return prepareVersion(state,ref,version,true)}
+  function prepareVersion(state,ref,version,correction){
     const versions=history(state,ref);
     if(!object(version))fail('invalid_version','Versão da ficha inválida.');
     identifier(version.id);
@@ -39,7 +55,14 @@
     if(version.note!==undefined&&(typeof version.note!=='string'||version.note.length>1000))fail('invalid_note','Use até 1.000 caracteres na observação.');
     const same=versions.find(row=>row.id===version.id);
     if(same){if(JSON.stringify(same)===JSON.stringify(version))return state;fail('duplicate_version_id','Este identificador já pertence a outra versão.')}
-    if(versions.some(row=>row.validFrom===version.validFrom))fail('duplicate_version_date','Já existe uma versão com esta data inicial. Escolha uma nova vigência.');
+    if(!correction&&versions.some(row=>row.validFrom===version.validFrom))fail('duplicate_version_date','Já existe uma versão com esta data inicial. Escolha uma nova vigência.');
+    if(correction){
+      identifier(version.supersedesVersionId);
+      const target=versions.find(row=>row.id===version.supersedesVersionId);
+      if(!target)fail('invalid_correction_target','A versão corrigida não pertence ao histórico desta referência.');
+      if(target.validFrom!==version.validFrom)fail('invalid_correction_date','A correção deve manter a data inicial da versão original.');
+      if(versions.some(row=>row.supersedesVersionId===target.id))fail('stale_version','Esta versão já foi corrigida. Selecione a versão vigente.');
+    }
     const catalogIssues=materials().validateCatalog(state);if(catalogIssues.length)fail(catalogIssues[0].code,catalogIssues[0].message);
     const preview=project(state,ref,version,version.validFrom);
     // Missing price is allowed as an explicitly incomplete sheet. Invalid or
@@ -47,7 +70,8 @@
     const blocker=preview.issues.find(row=>row.scope!=='distribution'&&row.code!=='missing_price'&&row.code!=='zero_sale_margin');
     if(blocker)fail(blocker.code,blocker.message);
     const existing=state.settings?.techSheets?.[ref];
-    return {...state,settings:{...state.settings,techSheets:{...state.settings?.techSheets,[ref]:{...(existing||{ref}),versions:[...(existing?.versions||[]),clone(version)]}}}};
+    const candidate={...state,settings:{...state.settings,techSheets:{...state.settings?.techSheets,[ref]:{...(existing||{ref}),versions:[...(existing?.versions||[]),clone(version)]}}}};
+    engine().versionHistory(candidate,ref);return candidate;
   }
   function formatMoney(mills){
     if(!Number.isSafeInteger(mills))return 'A conferir';
@@ -99,5 +123,5 @@
       ...(result.issues.length?['Pendências:',...result.issues.map(row=>row.message)]:[]),
       'Valores de referência; não registram produção, estoque ou resultado realizado.'].join('\n');
   }
-  return {history,draft,project,appendVersion,formatMoney,formatExact,delta,describe,shareText};
+  return {history,draft,draftCorrection,project,appendVersion,correctVersion,formatMoney,formatExact,delta,describe,shareText};
 });
