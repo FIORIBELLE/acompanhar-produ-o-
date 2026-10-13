@@ -23,7 +23,8 @@ test('categories and units expose the bounded schema and cannot be mutated',()=>
  assert.deepEqual(Materials.units,['m','un','par','placa','kg']);
  assert.ok(Materials.categories.every(item=>typeof item.label==='string'&&Object.isFrozen(item)));
  assert.ok(Object.isFrozen(Materials.categories));assert.ok(Object.isFrozen(Materials.units));
- assert.equal(Materials.editMaterial,undefined);assert.equal(Materials.removeMaterial,undefined);assert.equal(Materials.deactivateMaterial,undefined);assert.equal(Materials.editPrice,undefined);
+ for(const method of ['editMaterial','setMaterialActive','correctPrice','priceHistory','activePrices'])assert.equal(typeof Materials[method],'function');
+ assert.equal(Materials.removeMaterial,undefined);assert.equal(Materials.deactivateMaterial,undefined);assert.equal(Materials.editPrice,undefined);
 });
 for(const original of [{},state(),{settings:{}},{settings:{materials:[]}}])test('missing or empty catalog is read without adding fields: '+JSON.stringify(original),()=>{
  const before=freeze(original),snapshot=JSON.stringify(before);
@@ -128,7 +129,7 @@ test('no recorded price and not-yet-effective price are null, distinct from expl
  assert.equal(Materials.applicablePrice(row(next),'2026-12-31'),null);
  assert.equal(Materials.applicablePrice(row(next),'2027-01-01').unitPriceMills,0);assert.equal(row(next).prices[0].note,'');
 });
-test('existing inactive materials and prices remain readable without an edit or deactivate path',()=>{
+test('existing inactive materials and prices remain readable without changing their history',()=>{
  const before=Materials.addPrice(withMaterial(),input().id,price());row(before).active=false;freeze(before);
  assert.equal(Materials.listMaterials(before)[0].active,false);assert.equal(Materials.applicablePrice(row(before),'2026-10-12').unitPriceMills,1251);
  assert.throws(()=>Materials.addPrice(before,input().id,price({id:'new',from:'2027-01-01'})),code('inactive_material'));
@@ -211,4 +212,210 @@ test('a malformed unrelated material also blocks writes rather than silently rep
 test('invalid query date never falls back to current price or zero',()=>{
  const material=freeze(row(Materials.addPrice(withMaterial(),input().id,price())));
  for(const when of [null,undefined,'','2026-02-30'])assert.throws(()=>Materials.applicablePrice(material,when),code('invalid_date'));
+});
+
+const CORRECTED='2026-10-12T16:00:00.000Z',AFTER='2026-10-12T17:00:00.000Z';
+function edits(extra={}){return {name:'Material sintético',category:'tira',unit:'m',variantByColor:false,updatedAt:AFTER,...extra}}
+function correction(extra={}){return {id:'correction-synthetic',supersedesPriceId:'price-synthetic',from:'2026-10-12',unitPriceMills:0,note:'Correção sintética',correctedAt:CORRECTED,updatedAt:CORRECTED,...extra}}
+function withPrice(){return Materials.addPrice(withMaterial(),input().id,price())}
+function withCorrection(){return Materials.correctPrice(withPrice(),input().id,correction())}
+function assertOtherStateUnchanged(before,next){
+ for(const key of Object.keys(before).filter(key=>key!=='settings'))assert.strictEqual(next[key],before[key],key);
+ for(const key of Object.keys(before.settings).filter(key=>key!=='materials'))assert.strictEqual(next.settings[key],before.settings[key],key);
+ for(let i=1;i<before.settings.materials.length;i++)assert.strictEqual(next.settings.materials[i],before.settings.materials[i]);
+}
+
+test('editing only material metadata preserves every history row, extension and unrelated object',()=>{
+ let before=withCorrection();before=Materials.addMaterial(before,input({id:'other',supplier:'Outro fornecedor'}));
+ row(before).futureMaterial={preserve:['untouched']};row(before).prices[0].futurePrice={preserve:true};
+ freeze(before);const snapshot=JSON.stringify(before),oldHistory=JSON.stringify(row(before).prices);
+ const command=freeze(edits({name:'  Novo nome sintético  ',supplier:'  Fornecedor editado  ',variantByColor:true}));
+ const next=Materials.editMaterial(before,input().id,command);
+ assert.equal(row(next).name,'Novo nome sintético');assert.equal(row(next).supplier,'Fornecedor editado');assert.equal(row(next).variantByColor,true);
+ assert.equal(row(next).updatedAt,AFTER);assert.equal(row(next).createdAt,NOW);assert.equal(row(next).id,row(before).id);assert.equal(row(next).active,true);
+ assert.strictEqual(row(next).prices,row(before).prices);assert.strictEqual(row(next).futureMaterial,row(before).futureMaterial);
+ assert.equal(JSON.stringify(row(next).prices),oldHistory);assert.equal(JSON.stringify(before),snapshot);assertOtherStateUnchanged(before,next);
+ assert.equal(command.name,'  Novo nome sintético  ');assert.deepEqual(Materials.validateCatalog(next),[]);
+});
+test('supplier omission preserves the supplier, while an explicit empty value clears only that field',()=>{
+ const before=freeze(withMaterial({supplier:'Fornecedor sintético'}));
+ const preserved=Materials.editMaterial(before,input().id,edits({name:'Novo nome'}));assert.equal(row(preserved).supplier,'Fornecedor sintético');
+ const cleared=Materials.editMaterial(before,input().id,edits({supplier:'  '}));assert.equal(row(cleared).supplier,'');
+ const without=Materials.editMaterial(freeze(withMaterial()),input().id,edits({name:'Novo nome'}));assert.equal(Object.hasOwn(row(without),'supplier'),false);
+});
+test('category and unit can change on an empty history, including an inactive material',()=>{
+ const before=freeze(withMaterial({active:false}));
+ const next=Materials.editMaterial(before,input().id,edits({category:'cola',unit:'kg'}));
+ assert.equal(row(next).category,'cola');assert.equal(row(next).unit,'kg');assert.equal(row(next).active,false);assert.strictEqual(row(next).prices,row(before).prices);
+});
+for(const history of ['past','future','corrected','future-corrected'])test('category and unit stay locked for any '+history+' history',()=>{
+ const from=history.startsWith('future')?'2028-01-01':'2020-01-01';
+ let before=Materials.addPrice(withMaterial(),input().id,price({from}));
+ if(history.includes('corrected'))before=Materials.correctPrice(before,input().id,correction({from}));
+ freeze(before);const snapshot=JSON.stringify(before);
+ for(const change of [{category:'cola'},{unit:'kg'},{category:'outro',unit:'un'}])assert.throws(()=>Materials.editMaterial(before,input().id,edits(change)),code('locked_material_fields'));
+ const next=Materials.editMaterial(before,input().id,edits({name:'Novo nome',variantByColor:true}));
+ assert.equal(row(next).name,'Novo nome');assert.strictEqual(row(next).prices,row(before).prices);assert.equal(JSON.stringify(before),snapshot);
+});
+test('no-op metadata and active-state retries preserve state identity and never advance updatedAt',()=>{
+ const before=freeze(Materials.editMaterial(withCorrection(),input().id,edits({name:'Nome editado'})));
+ assert.strictEqual(Materials.editMaterial(before,input().id,edits({name:' Nome editado ',updatedAt:LATER})),before);
+ assert.strictEqual(Materials.setMaterialActive(before,input().id,{active:true,updatedAt:NOW}),before);
+ assert.equal(row(before).updatedAt,AFTER);
+});
+for(const [field,value] of [['name',''],['name',null],['name','x'.repeat(201)],['supplier',null],['supplier','x'.repeat(201)],['variantByColor',undefined],['variantByColor','false'],['category',undefined],['category','bad'],['unit',undefined],['unit','cm'],['updatedAt',undefined],['updatedAt','2026-10-12T14:00:00+00:00'],['updatedAt','2026-10-12T13:59:59Z']]){
+ test('invalid edit command remains atomic: '+field+' '+String(value).slice(0,30),()=>{
+  const before=freeze(withMaterial()),snapshot=JSON.stringify(before);
+  assert.throws(()=>Materials.editMaterial(before,input().id,edits({name:'Changed',[field]:value})));
+  assert.equal(JSON.stringify(before),snapshot);
+ });
+}
+for(const field of ['id','createdAt','prices','active','supersedesPriceId','correctedAt','futureUnknown'])test('metadata editing rejects undeclared field '+field,()=>{
+ const before=freeze(withCorrection());assert.throws(()=>Materials.editMaterial(before,input().id,edits({[field]:null})),code('invalid_input'));
+});
+test('activation and deactivation retain visible byte-identical history and all other state',()=>{
+ let before=Materials.addMaterial(withCorrection(),input({id:'other'}));row(before).futureField={keep:true};freeze(before);
+ const snapshot=JSON.stringify(before),deactivated=Materials.setMaterialActive(before,input().id,freeze({active:false,updatedAt:AFTER}));
+ assert.equal(row(deactivated).active,false);assert.strictEqual(row(deactivated).prices,row(before).prices);assert.strictEqual(row(deactivated).futureField,row(before).futureField);
+ assertOtherStateUnchanged(before,deactivated);assert.equal(JSON.stringify(before),snapshot);
+ assert.equal(Materials.listMaterials(deactivated).length,2);assert.equal(Materials.priceHistory(row(deactivated)).length,2);assert.equal(Materials.applicablePrice(row(deactivated),'2026-10-12').unitPriceMills,0);
+ assert.throws(()=>Materials.addPrice(deactivated,input().id,price({id:'new',from:'2027-01-01',updatedAt:AFTER})),code('inactive_material'));
+ assert.throws(()=>Materials.correctPrice(deactivated,input().id,correction({id:'new',supersedesPriceId:'correction-synthetic',correctedAt:AFTER,updatedAt:AFTER})),code('inactive_material'));
+ const renamed=Materials.editMaterial(deactivated,input().id,edits({name:'Nome inativo'}));assert.equal(row(renamed).name,'Nome inativo');assert.equal(row(renamed).active,false);
+ const active=Materials.setMaterialActive(freeze(renamed),input().id,{active:true,updatedAt:'2026-10-12T18:00:00Z'});
+ assert.equal(row(active).active,true);assert.strictEqual(row(active).prices,row(before).prices);assert.equal(row(active).createdAt,NOW);
+ const priced=Materials.addPrice(active,input().id,price({id:'new',from:'2027-01-01',updatedAt:'2026-10-12T18:00:00Z'}));assert.equal(row(priced).prices.length,3);
+});
+for(const change of [{active:undefined},{active:0},{active:'false'},{updatedAt:undefined},{updatedAt:'2026-10-11T00:00:00Z'},{prices:[]},{name:'hidden edit'}])test('invalid active-state command rejects: '+JSON.stringify(change),()=>{
+ const before=freeze(withMaterial());assert.throws(()=>Materials.setMaterialActive(before,input().id,{active:false,updatedAt:AFTER,...change}));assert.equal(row(before).active,true);
+});
+
+test('correction is append-only, records provenance and zero exactly, and leaves every old byte unchanged',()=>{
+ let before=Materials.addMaterial(withPrice(),input({id:'other'}));row(before).futureMaterial={keep:true};row(before).prices[0].futurePrice={keep:[1,2]};
+ freeze(before);const snapshot=JSON.stringify(before),oldBytes=row(before).prices.map(p=>JSON.stringify(p)),command=freeze(correction());
+ const next=Materials.correctPrice(before,input().id,command),material=row(next);
+ assert.equal(JSON.stringify(before),snapshot);assert.equal(material.prices.length,2);assert.equal(material.updatedAt,CORRECTED);assert.equal(material.createdAt,NOW);
+ assert.deepEqual(material.prices[1],{id:'correction-synthetic',from:'2026-10-12',unitPriceMills:0,note:'Correção sintética',supersedesPriceId:'price-synthetic',correctedAt:CORRECTED});
+ for(let i=0;i<oldBytes.length;i++){assert.strictEqual(material.prices[i],row(before).prices[i]);assert.equal(JSON.stringify(material.prices[i]),oldBytes[i])}
+ assertOtherStateUnchanged(before,next);assert.strictEqual(material.futureMaterial,row(before).futureMaterial);assert.deepEqual(Materials.validateCatalog(next),[]);
+ assert.equal(Materials.applicablePrice(material,'2026-10-12').id,'correction-synthetic');assert.equal(Materials.applicablePrice(material,'2026-10-12').unitPriceMills,0);
+ assert.deepEqual(Materials.priceHistory(material),[{price:material.prices[0],correctedBy:material.prices[1]},{price:material.prices[1],correctedBy:null}]);
+ assert.deepEqual(Materials.activePrices(material),[material.prices[1]]);
+ assert.equal(Object.hasOwn(material.prices[0],'correctedAt'),false);assert.equal(Object.hasOwn(material.prices[0],'correctedBy'),false);
+});
+test('future and retroactive corrections never change their effective date or unrelated date selection',()=>{
+ let before=withMaterial();
+ for(const [id,from,value] of [['future','2027-01-01',7000],['past','2020-01-01',1000],['middle','2026-01-01',2000]])before=Materials.addPrice(before,input().id,price({id,from,unitPriceMills:value}));
+ before=Materials.correctPrice(before,input().id,correction({id:'future-correction',supersedesPriceId:'future',from:'2027-01-01',unitPriceMills:0}));
+ before=Materials.correctPrice(before,input().id,correction({id:'past-correction',supersedesPriceId:'past',from:'2020-01-01',unitPriceMills:1111,correctedAt:AFTER,updatedAt:AFTER}));
+ freeze(before);const snapshot=JSON.stringify(before),material=row(before);
+ for(const [when,expected] of [['2019-12-31',null],['2020-01-01','past-correction'],['2025-12-31','past-correction'],['2026-01-01','middle'],['2026-12-31','middle'],['2027-01-01','future-correction']]){
+  assert.equal(Materials.applicablePrice(material,when)?.id||null,expected);
+ }
+ assert.deepEqual(Materials.activePrices(material).map(p=>p.id),['middle','future-correction','past-correction']);assert.equal(JSON.stringify(before),snapshot);
+});
+test('a correction can be corrected only through its current leaf; full linear audit chain stays visible',()=>{
+ const before=freeze(withCorrection()),next=Materials.correctPrice(before,input().id,correction({id:'second-correction',supersedesPriceId:'correction-synthetic',unitPriceMills:9001,correctedAt:AFTER,updatedAt:AFTER}));
+ assert.deepEqual(Materials.activePrices(row(next)).map(p=>p.id),['second-correction']);assert.equal(Materials.applicablePrice(row(next),'2026-10-12').unitPriceMills,9001);
+ const history=Materials.priceHistory(row(next));assert.equal(history[0].correctedBy.id,'correction-synthetic');assert.equal(history[1].correctedBy.id,'second-correction');assert.equal(history[2].correctedBy,null);
+ for(const supersedesPriceId of ['price-synthetic','correction-synthetic'])assert.throws(()=>Materials.correctPrice(next,input().id,correction({id:'fork',supersedesPriceId,correctedAt:AFTER,updatedAt:AFTER})),code('stale_price'));
+ assert.equal(row(next).prices.length,3);assert.strictEqual(row(next).prices[0],row(before).prices[0]);assert.strictEqual(row(next).prices[1],row(before).prices[1]);
+});
+test('read projections are independently sortable without mutating any history or creating a timestamp',()=>{
+ const before=freeze(withCorrection()),snapshot=JSON.stringify(before),material=row(before);
+ const history=Materials.priceHistory(material),active=Materials.activePrices(material);history.reverse();history.pop();active.pop();
+ assert.equal(Materials.priceHistory(material).length,2);assert.equal(Materials.activePrices(material).length,1);assert.equal(JSON.stringify(before),snapshot);
+ assert.deepEqual(Materials.priceHistory(row(withMaterial())),[]);assert.deepEqual(Materials.activePrices(row(withMaterial())),[]);
+});
+test('correction retries preserve later changes, subsequent corrections and inactive status without duplicate append',()=>{
+ const command=freeze(correction());let before=withCorrection();
+ before=Materials.correctPrice(before,input().id,correction({id:'second-correction',supersedesPriceId:command.id,unitPriceMills:5000,correctedAt:AFTER,updatedAt:AFTER}));
+ before=Materials.setMaterialActive(before,input().id,{active:false,updatedAt:AFTER});freeze(before);
+ assert.strictEqual(Materials.correctPrice(before,input().id,command),before);assert.equal(row(before).prices.length,3);
+ for(const change of [{from:'2026-10-11'},{unitPriceMills:1},{note:'Alterado'},{supersedesPriceId:'second-correction'},{correctedAt:LATER}]){
+  assert.throws(()=>Materials.correctPrice(before,input().id,{...command,...change}),code('duplicate_id'));
+ }
+ // The material-level revision time is not a second correction audit field.
+ assert.strictEqual(Materials.correctPrice(before,input().id,{...command,updatedAt:AFTER}),before);
+});
+test('ordinary price append cannot impersonate a correction retry or add another root to a corrected date',()=>{
+ const before=freeze(withCorrection());
+ assert.throws(()=>Materials.addPrice(before,input().id,price({id:'correction-synthetic',unitPriceMills:0,note:'Correção sintética',updatedAt:CORRECTED})),code('duplicate_id'));
+ for(const value of [0,1251])assert.throws(()=>Materials.addPrice(before,input().id,price({id:'new-root',unitPriceMills:value,updatedAt:CORRECTED})),code('duplicate_date'));
+ assert.strictEqual(Materials.addPrice(before,input().id,price()),before);
+});
+for(const [field,value] of [['supersedesPriceId','price-synthetic'],['supersedesPriceId',undefined],['correctedAt',CORRECTED],['correctedAt',undefined],['correctedBy','injected'],['prices',[]],['futureUnknown',1]])test('ordinary append rejects unknown or correction field '+field+' '+String(value),()=>{
+ const before=freeze(withMaterial());assert.throws(()=>Materials.addPrice(before,input().id,price({[field]:value})),code('invalid_input'));assert.equal(row(before).prices.length,0);
+});
+test('write commands reject inherited, accessor and symbol metadata before evaluating it',()=>{
+ const before=freeze(withMaterial());
+ const inherited=Object.assign(Object.create({supersedesPriceId:'injected'}),price());assert.throws(()=>Materials.addPrice(before,input().id,inherited),code('invalid_input'));
+ let evaluated=false;const accessor=price();Object.defineProperty(accessor,'correctedAt',{get(){evaluated=true;return CORRECTED}});
+ assert.throws(()=>Materials.addPrice(before,input().id,accessor),code('invalid_input'));assert.equal(evaluated,false);
+ const knownAccessor=price();Object.defineProperty(knownAccessor,'note',{get(){evaluated=true;return ''}});assert.throws(()=>Materials.addPrice(before,input().id,knownAccessor),code('invalid_input'));assert.equal(evaluated,false);
+ assert.throws(()=>Materials.addPrice(before,input().id,{...price(),[Symbol('correction')]:1}),code('invalid_input'));
+});
+test('strict write commands support JSON-shaped objects from a browser realm and with null prototype',()=>{
+ const context={};vm.createContext(context);const crossRealm=vm.runInContext('('+JSON.stringify(price())+')',context);
+ const next=Materials.addPrice(freeze(withMaterial()),input().id,crossRealm);assert.equal(row(next).prices.length,1);
+ const command=Object.assign(Object.create(null),correction());assert.equal(row(Materials.correctPrice(next,input().id,command)).prices.length,2);
+});
+test('correction identifiers share the catalog namespace and targets cannot cross material boundaries',()=>{
+ let before=Materials.addMaterial(withPrice(),input({id:'other'}));before=Materials.addPrice(before,'other',price({id:'other-price'}));freeze(before);
+ for(const id of ['material-synthetic','other','other-price','price-synthetic'])assert.throws(()=>Materials.correctPrice(before,input().id,correction({id})),code('duplicate_id'));
+ for(const supersedesPriceId of ['other-price','unknown','material-synthetic'])assert.throws(()=>Materials.correctPrice(before,input().id,correction({supersedesPriceId})),code('invalid_correction_target'));
+ assert.throws(()=>Materials.correctPrice(before,input().id,correction({from:'2026-10-13'})),code('invalid_correction_date'));
+});
+for(const [field,value] of [['id',''],['id',null],['supersedesPriceId',undefined],['supersedesPriceId',null],['supersedesPriceId',' spaced '],['from',undefined],['from','2026-02-30'],['unitPriceMills',null],['unitPriceMills','0'],['unitPriceMills',-1],['unitPriceMills',0.1],['unitPriceMills',Number.MAX_SAFE_INTEGER+1],['note',null],['note','x'.repeat(501)],['correctedAt',undefined],['correctedAt','2026-10-12'],['correctedAt','2026-10-12T16:00:00+00:00'],['correctedAt','2026-10-12T14:59:59.999Z'],['correctedAt',AFTER],['updatedAt',undefined],['updatedAt',LATER],['updatedAt','2026-02-30T16:00:00Z'],['active',false]]){
+ test('invalid correction remains atomic: '+field+' '+String(value).slice(0,30),()=>{
+  const before=freeze(withPrice()),snapshot=JSON.stringify(before);
+  assert.throws(()=>Materials.correctPrice(before,input().id,freeze(correction({[field]:value}))));assert.equal(JSON.stringify(before),snapshot);
+ });
+}
+test('correction normalizes note without mutating input and accepts exact maximum mills',()=>{
+ const command=freeze(correction({unitPriceMills:Number.MAX_SAFE_INTEGER,note:'  Revisado  '})),next=Materials.correctPrice(freeze(withPrice()),input().id,command);
+ assert.equal(row(next).prices[1].unitPriceMills,Number.MAX_SAFE_INTEGER);assert.equal(row(next).prices[1].note,'Revisado');assert.equal(command.note,'  Revisado  ');
+ const absent=Materials.correctPrice(freeze(withPrice()),input().id,correction({note:undefined}));assert.equal(row(absent).prices[1].note,'');
+});
+test('new correction audit time cannot precede a later metadata edit, even if after its target',()=>{
+ const before=freeze(Materials.editMaterial(withPrice(),input().id,edits({name:'Novo nome'})));
+ assert.throws(()=>Materials.correctPrice(before,input().id,correction({updatedAt:AFTER})),code('invalid_timestamp'));
+ const next=Materials.correctPrice(before,input().id,correction({correctedAt:AFTER,updatedAt:AFTER}));assert.equal(row(next).prices.length,2);
+});
+
+const corruptHistories=[
+ ['orphan',s=>row(s).prices[1].supersedesPriceId='missing'],
+ ['material target',s=>row(s).prices[1].supersedesPriceId=row(s).id],
+ ['self cycle',s=>row(s).prices[1].supersedesPriceId=row(s).prices[1].id],
+ ['two-row cycle',s=>Object.assign(row(s).prices[0],{supersedesPriceId:row(s).prices[1].id,correctedAt:CORRECTED})],
+ ['forward reference',s=>row(s).prices.reverse()],
+ ['wrong effective date',s=>row(s).prices[1].from='2027-01-01'],
+ ['fork',s=>row(s).prices.push({...row(s).prices[1],id:'fork'})],
+ ['second root',s=>row(s).prices.push({...row(s).prices[0],id:'second-root'})],
+ ['missing correction time',s=>delete row(s).prices[1].correctedAt],
+ ['missing target',s=>delete row(s).prices[1].supersedesPriceId],
+ ['undefined correction metadata',s=>row(s).prices[0].supersedesPriceId=undefined],
+ ['undefined time metadata',s=>row(s).prices[0].correctedAt=undefined],
+ ['invalid audit timestamp',s=>row(s).prices[1].correctedAt='2026-02-30T00:00:00Z'],
+ ['audit before creation',s=>row(s).prices[1].correctedAt='2020-01-01T00:00:00Z'],
+ ['audit after revision',s=>row(s).prices[1].correctedAt=AFTER],
+ ['null target',s=>row(s).prices[1].supersedesPriceId=null],
+ ['nonstring target',s=>row(s).prices[1].supersedesPriceId=123],
+ ['cross-material target',s=>{s.settings.materials.push({...clone(row(s)),id:'other',prices:[{...row(s).prices[0],id:'other-price'}]});row(s).prices[1].supersedesPriceId='other-price'}],
+ ['decreasing chain audit',s=>{row(s).updatedAt=AFTER;row(s).prices.push({...row(s).prices[1],id:'next',supersedesPriceId:'correction-synthetic',correctedAt:LATER})}],
+ ['decreasing unrelated audit',s=>{row(s).updatedAt=AFTER;row(s).prices.push({id:'future-root',from:'2027-01-01',unitPriceMills:2,note:''},{...row(s).prices[1],id:'future-correction',from:'2027-01-01',supersedesPriceId:'future-root',correctedAt:LATER})}]
+];
+for(const [label,corrupt] of corruptHistories)test('invalid history fails closed on all reads and writes: '+label,()=>{
+ const before=withCorrection();corrupt(before);freeze(before);const snapshot=JSON.stringify(before);
+ assert.ok(Materials.validateCatalog(before).length,label);
+ for(const operation of [()=>Materials.applicablePrice(row(before),'2026-10-12'),()=>Materials.priceHistory(row(before)),()=>Materials.activePrices(row(before)),()=>Materials.addMaterial(before,input({id:'new'})),()=>Materials.addPrice(before,input().id,price({id:'new',from:'2028-01-01',updatedAt:AFTER})),()=>Materials.correctPrice(before,input().id,correction()),()=>Materials.editMaterial(before,input().id,edits()),()=>Materials.setMaterialActive(before,input().id,{active:false,updatedAt:AFTER})])assert.throws(operation,label);
+ assert.equal(JSON.stringify(before),snapshot);
+});
+test('unknown materials and malformed commands never create a catalog through the new APIs',()=>{
+ const before=freeze(state()),snapshot=JSON.stringify(before);
+ for(const [method,command] of [['editMaterial',edits()],['setMaterialActive',{active:false,updatedAt:AFTER}],['correctPrice',correction()]]){
+  assert.throws(()=>Materials[method](before,'missing',command),code('unknown_material'));
+  for(const invalid of [undefined,null,[],true,'value'])assert.throws(()=>Materials[method](freeze(withMaterial()),input().id,invalid));
+ }
+ assert.equal(JSON.stringify(before),snapshot);assert.equal(before.settings.materials,undefined);
 });

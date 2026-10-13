@@ -227,7 +227,7 @@ footer{color:var(--soft);font-size:.78rem;text-align:center;padding:8px 0 24px}
     <button class="btn" id="edit-goal" type="button">Editar meta</button>
     <button class="btn primary" id="share" type="button">Compartilhar resumo</button>
   </div>
-  <footer id="app-footer">Base online Fiori Belle · sincronização automática · v2026.10.12-r8.8.0</footer>
+  <footer id="app-footer">Base online Fiori Belle · sincronização automática · v2026.10.12-r8.8.1</footer>
 </div>
 
 <div class="toast" id="toast" hidden role="status" aria-live="polite"></div>
@@ -246,7 +246,7 @@ footer{color:var(--soft);font-size:.78rem;text-align:center;padding:8px 0 24px}
 <script src="standard-sheet.js?v=33"></script>
 <script src="stock-adjustment.js?v=35"></script>
 <script src="general-dashboard.js?v=36"></script>
-<script src="material-catalog.js?v=39"></script>
+<script src="material-catalog.js?v=40"></script>
 <script>
 "use strict";
 const STORAGE_KEY="acompanhar_producao_v2";
@@ -949,19 +949,19 @@ function materialCatalogIssue(){
   return FioriMaterials.validateCatalog(data)[0]?.message||"";
 }
 function materialPriceText(mills){return "R$ "+FioriMaterials.formatPriceMills(mills)}
-function materialHistoryMarkup(item){
-  if(!Array.isArray(item.prices))return '<p class="notice">Histórico inválido. Solicite conferência.</p>';
-  const rows=item.prices.slice().sort((a,b)=>String(a?.from).localeCompare(String(b?.from))),today=spDate();
-  return `<details class="mounting-rate-history"><summary>Histórico de preços (${rows.length})</summary>${rows.length?`<ol>${rows.map((price,index)=>{
-    if(!price||!FioriMaterials.validDate(price.from)||!Number.isSafeInteger(price.unitPriceMills)||price.unitPriceMills<0)return '<li>Registro inválido. Solicite conferência.</li>';
-    const next=rows[index+1],until=next&&FioriMaterials.validDate(next.from)?` até ${fmtDate(addDays(next.from,-1))}`:' em diante';
-    return `<li><strong>${esc(materialPriceText(price.unitPriceMills))} / ${esc(item.unit)}</strong><br>De ${fmtDate(price.from)}${until}${price.from>today?' · futuro':''}${price.note?`<br>${esc(price.note)}`:''}</li>`;
-  }).join("")}</ol>`:'<p class="sub">Nenhum preço cadastrado. Valor a conferir.</p>'}<p class="sub">Somente leitura. Preços confirmados não podem ser editados ou apagados.</p></details>`;
+function materialCorrectionDate(timestamp){return new Intl.DateTimeFormat("pt-BR",{timeZone:TZ,dateStyle:"short",timeStyle:"short"}).format(new Date(timestamp))}
+function materialHistoryMarkup(item,blocked=false){
+  let rows,active;try{rows=FioriMaterials.priceHistory(item).sort((a,b)=>a.price.from.localeCompare(b.price.from));active=FioriMaterials.activePrices(item).sort((a,b)=>a.from.localeCompare(b.from))}catch(_){return '<p class="notice">Histórico inválido. Solicite conferência.</p>'}
+  const today=spDate();
+  return `<details class="mounting-rate-history"><summary>Histórico de preços (${rows.length})</summary>${rows.length?`<ol>${rows.map(({price,correctedBy})=>{
+    const next=active.find(row=>row.from>price.from),until=next?` até ${fmtDate(addDays(next.from,-1))}`:' em diante';
+    return `<li><strong>${esc(materialPriceText(price.unitPriceMills))} / ${esc(item.unit)}</strong><br>De ${fmtDate(price.from)}${until}${price.from>today?' · futuro':''}${price.note?`<br>${esc(price.note)}`:''}${correctedBy?`<br><span class="material-corrected">Corrigido em ${esc(materialCorrectionDate(correctedBy.correctedAt))}</span>`:price.supersedesPriceId?`<br><span class="sub">Correção registrada em ${esc(materialCorrectionDate(price.correctedAt))}</span>`:''}${!correctedBy&&item.active?`<br><button class="btn small" type="button" data-material-correct="${esc(price.id)}" data-material-id="${esc(item.id)}" ${blocked?'disabled':''}>Corrigir preço</button>`:''}</li>`;
+  }).join("")}</ol>`:'<p class="sub">Nenhum preço cadastrado. Valor a conferir.</p>'}<p class="sub">Somente leitura dos registros originais. Corrigir acrescenta outro registro; nada é apagado.</p></details>`;
 }
 function materialCard(item,blocked){
   let current='<strong>A conferir · sem preço aplicável hoje</strong>';
   try{const price=FioriMaterials.applicablePrice(item,spDate());if(price)current=`<strong>${esc(materialPriceText(price.unitPriceMills))} / ${esc(item.unit)} hoje</strong><div class="sub">Preço desde ${fmtDate(price.from)}</div>`}catch(_){current='<strong>A conferir · cadastro ou histórico inválido</strong>'}
-  return `<article class="material-card"><h4>${esc(item.name||'Material a conferir')}${item.active===false?' · inativo':''}</h4><p class="sub">Unidade: ${esc(item.unit||'a conferir')}${item.supplier?` · Fornecedor: ${esc(item.supplier)}`:''}${item.variantByColor?' · Varia por cor':''}</p><div class="mounting-current-rate">${current}</div>${item.active===true?`<button class="btn small" type="button" data-material-price="${esc(item.id)}" ${blocked?'disabled':''}>Definir novo preço</button>`:'<p class="sub">Cadastro somente leitura.</p>'}${materialHistoryMarkup(item)}</article>`;
+  return `<article class="material-card"><h4>${esc(item.name||'Material a conferir')}${item.active===false?' · inativo':''}</h4><p class="sub">Unidade: ${esc(item.unit||'a conferir')}${item.supplier?` · Fornecedor: ${esc(item.supplier)}`:''}${item.variantByColor?' · Varia por cor':''}</p><div class="mounting-current-rate">${current}</div><div class="button-row"><button class="btn small" type="button" data-material-edit="${esc(item.id)}" ${blocked?'disabled':''}>Editar material</button><button class="btn small" type="button" data-material-active="${esc(item.id)}" ${blocked?'disabled':''}>${item.active?'Desativar':'Ativar'} material</button>${item.active===true?`<button class="btn small" type="button" data-material-price="${esc(item.id)}" ${blocked?'disabled':''}>Definir novo preço</button>`:''}</div>${item.active?'':'<p class="sub">Histórico disponível para consulta. Ative o material para acrescentar ou corrigir preços.</p>'}${materialHistoryMarkup(item,blocked)}</article>`;
 }
 function materialsSettingsMarkup(){
   const issue=materialCatalogIssue(),busy=assemblyBusy(),raw=data.settings.materials,items=Array.isArray(raw)?raw.filter(item=>item&&typeof item==='object'&&!Array.isArray(item)):[];
@@ -976,7 +976,7 @@ function refreshMaterialAvailability(){
   if(ui.tab!=="settings")return;
   const busy=assemblyBusy(),blocked=busy||!!materialCatalogIssue(),add=document.getElementById("new-material");
   if(add)add.disabled=blocked;
-  document.querySelectorAll("[data-material-price]").forEach(button=>button.disabled=blocked);
+  for(const selector of ['[data-material-price]','[data-material-edit]','[data-material-active]','[data-material-correct]'])document.querySelectorAll(selector).forEach(button=>button.disabled=blocked);
   const notice=document.getElementById("material-online-warning");if(notice)notice.hidden=!busy;
 }
 function invalidateMaterialDialog(){if(materialAttempt)closeModal()}
@@ -992,65 +992,109 @@ function materialReady(attempt){
   if(!confirmed||JSON.stringify(confirmed)!==attempt.baseFingerprint){closeModal();showToast("A base online mudou ou ainda não foi confirmada. Aguarde e reabra o cadastro.");return false}
   return true;
 }
-function openMaterial(mode,materialId=null,returnFocus=null){
+// Only inspect the specified optional structure; never create or calculate a sheet.
+function materialReferenceWarning(base,materialId){
+  const sheets=base.settings?.techSheets;if(sheets===undefined)return "";
+  const object=value=>value&&typeof value==='object'&&!Array.isArray(value),refs=[],today=spDate();let unknown=false;
+  if(!object(sheets))return "Não foi possível conferir referências nas fichas técnicas. Confira os vínculos antes de desativar.";
+  for(const [key,sheet]of Object.entries(sheets)){
+    if(!object(sheet)||typeof sheet.ref!=='string'||sheet.ref!==key||!Array.isArray(sheet.versions)){unknown=true;continue}
+    const dates=new Set();let current=null,valid=true;
+    for(const version of sheet.versions){
+      if(!object(version)||!FioriMaterials.validDate(version.validFrom)||dates.has(version.validFrom)||!Array.isArray(version.items)||version.items.some(item=>!object(item)||typeof item.materialId!=='string'||!item.materialId)){valid=false;break}
+      dates.add(version.validFrom);if(version.validFrom<=today&&(!current||version.validFrom>current.validFrom))current=version;
+    }
+    if(!valid){unknown=true;continue}
+    if(current?.items.some(item=>item.materialId===materialId))refs.push(sheet.ref);
+  }
+  const known=refs.length?`Este material aparece nas fichas vigentes das referências: ${refs.sort((a,b)=>a.localeCompare(b,'pt-BR',{numeric:true})).join(', ')}. Os vínculos serão mantidos com o material inativo. Confira essas referências antes de desativar.`:"";
+  return [known,unknown?"Não foi possível conferir todas as referências nas fichas técnicas. Confira os vínculos antes de desativar.":""].filter(Boolean).join(' ');
+}
+function openMaterial(mode,materialId=null,returnFocus=null,priceId=null){
   if(ui.tab!=="settings")return;
   if(assemblyBusy()){showToast("Aguarde a confirmação da base online ou resolva o conflito antes de cadastrar.");return}
   const issue=materialCatalogIssue();if(issue){showToast(issue);return}
   // Build only from the raw confirmed JSON. loadData normalizations are display-only.
   const base=materialConfirmedBase();if(!base){showToast("Aguarde a base online confirmar os dados antes de abrir o cadastro.");return}
   const baseIssue=FioriMaterials.validateCatalog(base)[0];if(baseIssue){showToast(baseIssue.message);return}
-  const item=mode==="price"?FioriMaterials.listMaterials(base).find(item=>item.id===materialId&&item.active===true):null;
-  if(mode!=="new"&&(mode!=="price"||!item))return;
-  const attempt={mode,id:uid(mode==="new"?"material":"preco"),materialId,name:item?.name||"",unit:item?.unit||"",category:"",supplier:"",variantByColor:false,date:spDate(),value:"",note:"",createdAt:new Date().toISOString(),base,baseFingerprint:JSON.stringify(base),fingerprint:JSON.stringify(data),generation:mountingSettingsGeneration,returnFocus,phase:"form"};
+  if(!['new','edit','active','price','correct'].includes(mode))return;
+  const item=mode==='new'?null:FioriMaterials.listMaterials(base).find(item=>item.id===materialId);
+  if(mode!=='new'&&!item)return;if((mode==='price'||mode==='correct')&&!item.active)return;
+  const corrected=mode==='correct'?FioriMaterials.activePrices(item).find(price=>price.id===priceId):null;if(mode==='correct'&&!corrected){showToast("Esse preço já foi corrigido ou não está disponível. Reabra o histórico.");return}
+  const attempt={mode,id:uid(mode==="new"?"material":"preco"),materialId,priceId,name:item?.name||"",unit:item?.unit||"",category:item?.category||"",supplier:item?.supplier||"",variantByColor:item?.variantByColor||false,active:item?!item.active:true,hasPrices:!!item?.prices.length,date:corrected?.from||spDate(),value:corrected?FioriMaterials.formatPriceMills(corrected.unitPriceMills).replace(/\./g,''):"",note:"",createdAt:new Date().toISOString(),base,baseFingerprint:JSON.stringify(base),fingerprint:JSON.stringify(data),generation:mountingSettingsGeneration,returnFocus,phase:"form"};
   materialForm(attempt);
 }
+function materialCandidate(attempt,input){
+  if(attempt.mode==='new')return FioriMaterials.addMaterial(attempt.base,input);
+  if(attempt.mode==='edit')return FioriMaterials.editMaterial(attempt.base,attempt.materialId,input);
+  if(attempt.mode==='active')return FioriMaterials.setMaterialActive(attempt.base,attempt.materialId,input);
+  if(attempt.mode==='correct')return FioriMaterials.correctPrice(attempt.base,attempt.materialId,input);
+  return FioriMaterials.addPrice(attempt.base,attempt.materialId,input);
+}
 function materialInput(attempt){
-  if(attempt.mode==="new"){
-    const input={id:attempt.id,name:attempt.name,category:attempt.category,unit:attempt.unit,supplier:attempt.supplier,variantByColor:attempt.variantByColor,active:true,createdAt:attempt.createdAt,updatedAt:attempt.createdAt};
-    FioriMaterials.addMaterial(attempt.base,input);return input;
+  let input;
+  if(attempt.mode==='active')input={active:attempt.active,updatedAt:attempt.createdAt};
+  else if(attempt.mode==='new'||attempt.mode==='edit'){
+    input={name:attempt.name,category:attempt.category,unit:attempt.unit,supplier:attempt.supplier,variantByColor:attempt.variantByColor,updatedAt:attempt.createdAt};
+    if(attempt.mode==='new')Object.assign(input,{id:attempt.id,active:true,createdAt:attempt.createdAt});
+  }else{
+    input={id:attempt.id,from:attempt.date,unitPriceMills:FioriMaterials.parsePriceMills(attempt.value),note:attempt.note,updatedAt:attempt.createdAt};
+    if(attempt.mode==='correct')Object.assign(input,{supersedesPriceId:attempt.priceId,correctedAt:attempt.createdAt});
   }
-  const input={id:attempt.id,from:attempt.date,unitPriceMills:FioriMaterials.parsePriceMills(attempt.value),note:attempt.note,updatedAt:attempt.createdAt};
-  FioriMaterials.addPrice(attempt.base,attempt.materialId,input);return input;
+  materialCandidate(attempt,input);return input;
 }
 function materialPricePreview(attempt,input){
-  const item=FioriMaterials.listMaterials(attempt.base).find(item=>item.id===attempt.materialId),next=item.prices.filter(price=>price.from>input.from).slice().sort((a,b)=>a.from.localeCompare(b.from))[0];
-  return `${materialPriceText(input.unitPriceMills)} / ${attempt.unit}, de ${fmtDate(input.from)}${next?` até ${fmtDate(addDays(next.from,-1))}`:' em diante'}.${input.from>spDate()?' Preço futuro.':''}${input.unitPriceMills===0?' Preço zero informado explicitamente.':''}`;
+  const item=FioriMaterials.listMaterials(attempt.base).find(item=>item.id===attempt.materialId),next=FioriMaterials.activePrices(item).filter(price=>price.from>input.from).sort((a,b)=>a.from.localeCompare(b.from))[0];
+  const original=attempt.mode==='correct'?item.prices.find(price=>price.id===attempt.priceId):null;
+  return `${original?`Substituir ${materialPriceText(original.unitPriceMills)} por `:''}${materialPriceText(input.unitPriceMills)} / ${attempt.unit}, de ${fmtDate(input.from)}${next?` até ${fmtDate(addDays(next.from,-1))}`:' em diante'}.${input.from>spDate()?' Preço futuro.':''}${input.unitPriceMills===0?' Preço zero informado explicitamente.':''}${original?' O registro anterior ficará marcado como corrigido, com a data da correção.':''}`;
 }
 function materialForm(attempt,errorMessage=""){
   attempt.phase="form";materialAttempt=attempt;
-  const isNew=attempt.mode==="new";
-  const fields=isNew?`<div class="field"><label for="material-name">Nome do material</label><input id="material-name" required autocomplete="off" maxlength="200" value="${esc(attempt.name)}"></div><div class="form-grid"><div class="field"><label for="material-category">Categoria</label><select id="material-category" required><option value="">Escolha a categoria</option>${FioriMaterials.categories.map(category=>`<option value="${category.id}">${esc(category.label)}</option>`).join('')}</select></div><div class="field"><label for="material-unit">Unidade</label><select id="material-unit" required><option value="">Escolha a unidade</option>${FioriMaterials.units.map(unit=>`<option value="${unit}">${unit}</option>`).join('')}</select></div></div><div class="field"><label for="material-supplier">Fornecedor (opcional)</label><input id="material-supplier" autocomplete="off" maxlength="200" value="${esc(attempt.supplier)}"></div><label class="material-color-option"><input id="material-color" type="checkbox" ${attempt.variantByColor?'checked':''}> Varia por cor</label><p class="sub">O material será criado sem preço. Depois, use Definir novo preço para registrar uma vigência.</p>`:`<div class="field"><label for="material-price-date">Data inicial do preço</label><input id="material-price-date" type="date" required value="${esc(attempt.date)}"></div><div class="field"><label for="material-price-value">Preço por ${esc(attempt.unit)} (R$)</label><input id="material-price-value" inputmode="decimal" autocomplete="off" required value="${esc(attempt.value)}" placeholder="0,000" aria-describedby="material-price-help material-price-preview"></div><p class="sub" id="material-price-help">Até três casas decimais, sem separador de milhares. Zero é aceito quando informado.</p><div class="field"><label for="material-price-note">Observação (opcional)</label><input id="material-price-note" autocomplete="off" maxlength="500" value="${esc(attempt.note)}"></div><div class="calc" id="material-price-preview" role="status" aria-live="polite"></div>`;
-  showModal(`<h2 id="modal-title">${isNew?'Novo material':`Novo preço · ${esc(attempt.name)}`}</h2><form id="material-form" novalidate>${fields}<p id="material-error" class="notice" role="alert" tabindex="-1" ${errorMessage?'':'hidden'}>${esc(errorMessage)}</p><div class="button-row"><button class="btn" type="button" data-modal-close>Cancelar</button><button class="btn primary" type="submit">${isNew?'Revisar material':'Revisar preço'}</button></div></form>`,"material");
-  const version=goalDialogVersion,form=document.getElementById("material-form");
-  const names=isNew?['name','category','unit','supplier']:['date','value','note'];
-  const nodeFor=key=>document.getElementById(isNew?'material-'+key:'material-price-'+key);
-  names.forEach(key=>{nodeFor(key).value=attempt[key]});if(isNew)document.getElementById("material-color").checked=attempt.variantByColor;
-  function read(){names.forEach(key=>attempt[key]=nodeFor(key).value);if(isNew)attempt.variantByColor=document.getElementById("material-color").checked}
-  function update(){if(!materialIsCurrent(attempt,version))return;read();if(!isNew){const preview=document.getElementById("material-price-preview");try{preview.textContent=materialPricePreview(attempt,materialInput(attempt))}catch(error){preview.textContent=error.message}}}
-  names.forEach(key=>{nodeFor(key).oninput=update;nodeFor(key).onchange=update});if(isNew)document.getElementById("material-color").onchange=update;update();
+  if(attempt.mode==='active'){materialConfirm(attempt,{active:attempt.active,updatedAt:attempt.createdAt},errorMessage);return}
+  const isNew=attempt.mode==='new',isEdit=attempt.mode==='edit',metadata=isNew||isEdit,correction=attempt.mode==='correct',locked=isEdit&&attempt.hasPrices;
+  const fields=metadata?`<div class="field"><label for="material-name">Nome do material</label><input id="material-name" required autocomplete="off" maxlength="200" value="${esc(attempt.name)}"></div><div class="form-grid"><div class="field"><label for="material-category">Categoria</label><select id="material-category" required ${locked?'disabled':''}><option value="">Escolha a categoria</option>${FioriMaterials.categories.map(category=>`<option value="${category.id}">${esc(category.label)}</option>`).join('')}</select></div><div class="field"><label for="material-unit">Unidade</label><select id="material-unit" required ${locked?'disabled':''}><option value="">Escolha a unidade</option>${FioriMaterials.units.map(unit=>`<option value="${unit}">${unit}</option>`).join('')}</select></div></div>${locked?'<p class="notice">Categoria e unidade estão bloqueadas porque este material já tem histórico de preço, inclusive futuro ou corrigido.</p>':''}<div class="field"><label for="material-supplier">Fornecedor (opcional)</label><input id="material-supplier" autocomplete="off" maxlength="200" value="${esc(attempt.supplier)}"></div><label class="material-color-option"><input id="material-color" type="checkbox" ${attempt.variantByColor?'checked':''}> Varia por cor</label>${isNew?'<p class="sub">O material será criado sem preço. Depois, use Definir novo preço para registrar uma vigência.</p>':''}`:`<div class="field"><label for="material-price-date">Data inicial do preço</label><input id="material-price-date" type="date" required ${correction?'readonly':''} value="${esc(attempt.date)}"></div>${correction?'<p class="notice">A correção mantém a mesma data inicial. O registro original e as correções anteriores serão preservados.</p>':''}<div class="field"><label for="material-price-value">Preço por ${esc(attempt.unit)} (R$)</label><input id="material-price-value" inputmode="decimal" autocomplete="off" required value="${esc(attempt.value)}" placeholder="0,000" aria-describedby="material-price-help material-price-preview"></div><p class="sub" id="material-price-help">Até três casas decimais, sem separador de milhares. Zero é aceito quando informado.</p><div class="field"><label for="material-price-note">${correction?'Observação da correção':'Observação'} (opcional)</label><input id="material-price-note" autocomplete="off" maxlength="500" value="${esc(attempt.note)}"></div><div class="calc" id="material-price-preview" role="status" aria-live="polite"></div>`;
+  showModal(`<h2 id="modal-title">${isNew?'Novo material':`${isEdit?'Editar material':correction?'Corrigir preço':'Novo preço'} · ${esc(attempt.name)}`}</h2><form id="material-form" novalidate>${fields}<p id="material-error" class="notice" role="alert" tabindex="-1" ${errorMessage?'':'hidden'}>${esc(errorMessage)}</p><div class="button-row"><button class="btn" type="button" data-modal-close>Cancelar</button><button class="btn primary" type="submit">${metadata?'Revisar material':correction?'Revisar correção':'Revisar preço'}</button></div></form>`,"material");
+  const version=goalDialogVersion,form=document.getElementById("material-form"),names=metadata?['name','category','unit','supplier']:['date','value','note'];
+  const nodeFor=key=>document.getElementById(metadata?'material-'+key:'material-price-'+key);
+  names.forEach(key=>{nodeFor(key).value=attempt[key]});if(metadata){document.getElementById("material-color").checked=attempt.variantByColor;nodeFor('category').disabled=locked;nodeFor('unit').disabled=locked}
+  function read(){names.forEach(key=>attempt[key]=nodeFor(key).value);if(metadata)attempt.variantByColor=document.getElementById("material-color").checked}
+  function update(){if(!materialIsCurrent(attempt,version))return;read();if(!metadata){const preview=document.getElementById("material-price-preview");try{preview.textContent=materialPricePreview(attempt,materialInput(attempt))}catch(error){preview.textContent=error.message}}}
+  names.forEach(key=>{nodeFor(key).oninput=update;nodeFor(key).onchange=update});if(metadata)document.getElementById("material-color").onchange=update;update();
   form.onsubmit=event=>{
     event.preventDefault();if(!materialIsCurrent(attempt,version)||attempt.phase!=="form"||!materialReady(attempt))return;
     read();let input;try{input=materialInput(attempt)}catch(error){const alert=document.getElementById("material-error");alert.textContent=error.message;alert.hidden=false;alert.focus?.();return}
     materialConfirm(attempt,input);
   };
-  if(errorMessage)document.getElementById("material-error").focus?.();else nodeFor(isNew?'name':'date').focus?.();
+  if(errorMessage)document.getElementById("material-error").focus?.();else nodeFor(metadata?'name':correction?'value':'date').focus?.();
 }
-function materialConfirm(attempt,input){
-  attempt.phase="confirm";const isNew=attempt.mode==="new",category=isNew?FioriMaterials.categories.find(category=>category.id===input.category):null;
-  const preview=isNew?`<p><strong>${esc(input.name.trim())}</strong></p><p>${esc(category.label)} · ${esc(input.unit)}${input.supplier?` · ${esc(input.supplier.trim())}`:''}${input.variantByColor?' · Varia por cor':''}</p><p class="sub">Sem preço cadastrado. O valor ficará a conferir até uma vigência ser confirmada.</p>`:`<p><strong>${esc(attempt.name)}</strong></p><p>${esc(materialPricePreview(attempt,input))}</p>${input.note?`<p>${esc(input.note.trim())}</p>`:''}<p class="sub">Este preço será acrescentado ao histórico e não poderá ser editado ou apagado.</p>`;
-  showModal(`<h2 id="modal-title">${isNew?'Confirmar novo material?':'Confirmar novo preço?'}</h2>${preview}<div class="button-row"><button class="btn" type="button" data-modal-close>Cancelar</button><button class="btn" type="button" id="material-back">Voltar</button><button class="btn primary" type="button" id="material-confirm">${isNew?'Confirmar material':'Confirmar preço'}</button></div>`,"material");
+function materialConfirm(attempt,input,errorMessage=""){
+  attempt.phase="confirm";const metadata=attempt.mode==='new'||attempt.mode==='edit',active=attempt.mode==='active',correction=attempt.mode==='correct',category=metadata?FioriMaterials.categories.find(category=>category.id===input.category):null;
+  let preview,title,label;
+  if(active){
+    title=`${input.active?'Ativar':'Desativar'} material?`;label=`${input.active?'Ativar':'Desativar'} material`;
+    const warning=input.active?'':materialReferenceWarning(attempt.base,attempt.materialId);
+    preview=`<p><strong>${esc(attempt.name)}</strong></p><p>${input.active?'O material ficará ativo para novos preços e correções.':'O material ficará inativo. Seu cadastro e todo o histórico continuarão visíveis.'}</p>${warning?`<p class="notice" role="alert">${esc(warning)}</p>`:''}`;
+  }else if(metadata){
+    title=attempt.mode==='new'?'Confirmar novo material?':'Confirmar alterações do material?';label=attempt.mode==='new'?'Confirmar material':'Confirmar alterações';
+    preview=`<p><strong>${esc(input.name.trim())}</strong></p><p>${esc(category.label)} · ${esc(input.unit)}${input.supplier?` · ${esc(input.supplier.trim())}`:''}${input.variantByColor?' · Varia por cor':''}</p>${attempt.mode==='new'?'<p class="sub">Sem preço cadastrado. O valor ficará a conferir até uma vigência ser confirmada.</p>':'<p class="sub">O identificador e o histórico de preços serão preservados.</p>'}`;
+  }else{
+    title=correction?'Confirmar correção de preço?':'Confirmar novo preço?';label=correction?'Confirmar correção':'Confirmar preço';
+    preview=`<p><strong>${esc(attempt.name)}</strong></p><p>${esc(materialPricePreview(attempt,input))}</p>${input.note?`<p>${esc(input.note.trim())}</p>`:''}<p class="sub">${correction?'Um novo registro substituirá somente o preço escolhido na mesma data. O anterior não será alterado nem apagado.':'Este preço será acrescentado ao histórico. Registros originais não podem ser editados ou apagados.'}</p>`;
+  }
+  showModal(`<h2 id="modal-title">${title}</h2>${preview}<p id="material-error" class="notice" role="alert" tabindex="-1" ${errorMessage?'':'hidden'}>${esc(errorMessage)}</p><div class="button-row"><button class="btn" type="button" data-modal-close>Cancelar</button>${active?'':'<button class="btn" type="button" id="material-back">Voltar</button>'}<button class="btn primary" type="button" id="material-confirm">${label}</button></div>`,"material");
   const version=goalDialogVersion,confirm=document.getElementById("material-confirm");let used=false;
-  document.getElementById("material-back").onclick=()=>{if(!used&&materialIsCurrent(attempt,version))materialForm(attempt)};
+  if(!active)document.getElementById("material-back").onclick=()=>{if(!used&&materialIsCurrent(attempt,version))materialForm(attempt)};
   confirm.onclick=()=>{
     if(used||!materialIsCurrent(attempt,version)||attempt.phase!=="confirm")return;used=true;confirm.disabled=true;
     if(!materialReady(attempt))return;
     try{
-      const previous=data,next=isNew?FioriMaterials.addMaterial(attempt.base,input):FioriMaterials.addPrice(attempt.base,attempt.materialId,input);
+      const now=new Date().toISOString(),confirmedInput={...input,updatedAt:now,...(correction?{correctedAt:now}:{})},previous=data,next=materialCandidate(attempt,confirmedInput);
+      if(next===attempt.base){closeModal();showToast("Nenhuma alteração no material.");return}
       if(!persistCandidate(next,previous)){materialForm(attempt,"Não foi possível salvar. Confira o espaço e a conexão; revise os dados para tentar novamente.");return}
       data=loadData(next);closeModal();render();showToast(window.fioriOnline?.onlineMode?"Cadastro salvo neste aparelho. Aguardando confirmação online.":"Cadastro salvo neste aparelho.");
     }catch(error){materialForm(attempt,error.message)}
   };
-  document.getElementById("material-back").focus?.();
+  if(errorMessage)document.getElementById("material-error").focus?.();else if(!active)document.getElementById("material-back").focus?.();else document.getElementById("modal-sheet").querySelector?.('[data-modal-close]')?.focus?.();
 }
 
 function backupStatus(){
@@ -1084,7 +1128,8 @@ function renderSettings(){
   document.querySelectorAll("[data-name-id]").forEach(i=>i.onchange=()=>renameItem(i.dataset.type,i.dataset.nameId,i.value));
   document.querySelectorAll("[data-define-rate]").forEach(b=>b.onclick=()=>{if(settingsGeneration===mountingSettingsGeneration&&ui.tab==="settings")openMountingRate(b.dataset.defineRate,b)});
   document.getElementById("new-material").onclick=event=>{if(settingsGeneration===mountingSettingsGeneration&&ui.tab==="settings")openMaterial("new",null,event.currentTarget)};
-  document.querySelectorAll("[data-material-price]").forEach(button=>button.onclick=()=>{if(settingsGeneration===mountingSettingsGeneration&&ui.tab==="settings")openMaterial("price",button.dataset.materialPrice,button)});
+  for(const mode of ["price","edit","active"])document.querySelectorAll(`[data-material-${mode}]`).forEach(button=>button.onclick=()=>{if(settingsGeneration===mountingSettingsGeneration&&ui.tab==="settings")openMaterial(mode,button.dataset["material"+mode[0].toUpperCase()+mode.slice(1)],button)});
+  document.querySelectorAll("[data-material-correct]").forEach(button=>button.onclick=()=>{if(settingsGeneration===mountingSettingsGeneration&&ui.tab==="settings")openMaterial("correct",button.dataset.materialId,button,button.dataset.materialCorrect)});
   document.querySelectorAll("[data-edit-model]").forEach(b=>b.onclick=()=>editModel(b.dataset.editModel));
   document.querySelectorAll("[data-move]").forEach(b=>b.onclick=()=>moveItem(b.dataset.type,b.dataset.id,b.dataset.move));
   document.querySelectorAll("[data-remove]").forEach(b=>b.onclick=()=>removeItem(b.dataset.type,b.dataset.remove));

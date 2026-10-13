@@ -321,7 +321,7 @@ test('all stock adjustment text is escaped, and module and inventory cache versi
   const d=fixture();d.settings.mountings[0].name='<img src=x onerror=alert(1)>';
   const a=app(d).manual({reason:'<script>alert(1)</script>',direction:'in',color:'<img src=x>'});a.review();
   assert.doesNotMatch(a.node('modal-sheet').innerHTML,/<script>|<img src=x/);assert.match(a.node('modal-sheet').innerHTML,/&lt;script&gt;/);
-  assert.match(html,/stock-adjustment\.js\?v=35/);assert.match(html,/inventory-guard\.js\?v=35/);assert.match(html,/v2026\.10\.12-r8\.8\.0/);
+  assert.match(html,/stock-adjustment\.js\?v=35/);assert.match(html,/inventory-guard\.js\?v=35/);assert.match(html,/v2026\.10\.12-r8\.8\.1/);
 });
 
 for(const kind of ['manual','reset','reverse'])test(`${kind} saves only the raw confirmed base when a legacy local view has an unsaved current week`,()=>{
