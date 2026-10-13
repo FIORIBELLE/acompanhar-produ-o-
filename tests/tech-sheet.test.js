@@ -43,8 +43,8 @@ test('UMD is inert and exposes the same pure API with existing read-only depende
  const empty=vm.createContext({});vm.runInContext(fs.readFileSync(require.resolve('../tech-sheet'),'utf8'),empty);
  assert.equal(empty.FioriTechSheets.calculateTechSheet({},{}).status,'a_conferir');
 });
-test('the new module is not loaded by the application or used by legacy costing modules',()=>{
- for(const name of ['index.html','general-dashboard.js','inventory-guard.js','assembly-finance.js'])assert.doesNotMatch(fs.readFileSync(require.resolve('../'+name),'utf8'),/FioriTechSheets|tech-sheet\.js/);
+test('technical-sheet engine remains isolated from legacy operational costing modules',()=>{
+ for(const name of ['general-dashboard.js','inventory-guard.js','assembly-finance.js'])assert.doesNotMatch(fs.readFileSync(require.resolve('../'+name),'utf8'),/FioriTechSheets|tech-sheet\.js/);
 });
 for(const [quantity,expected] of [['1',1000],['0.001',1],['1,234',1234],[' 002.010 ',2010],['9007199254740.991',Number.MAX_SAFE_INTEGER]])test('exact positive quantity '+quantity,()=>assert.equal(T.parseQuantityThousandths(quantity),expected));
 for(const quantity of [null,undefined,0,1,true,{},[],'',' ','0','0.000','-0','-1','+1','1e3','1.2345','.5','1.','1,000.000','1 000','9007199254740.992','Infinity'])test('invalid quantity '+String(quantity),()=>{
