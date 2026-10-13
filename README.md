@@ -178,7 +178,7 @@ A pendência de “Começar” foi corrigida nesta branch `etapa-0-1`. O fluxo `
 
 Uma fila já gravada continua pendente e recuperável quando somente o cache falha; a confirmação online e os conflitos continuam no CAS existente. Cache v38. Os testes sintéticos cobrem semana ausente ou existente com campos ausentes, preservação do estado anterior, falha da fila, falha apenas do cache, repetição com um único CAS, valores inválidos, cancelamento e callback antigo. Execute `node --test tests/*.test.js`. Nenhum dado operacional é usado ou gravado.
 
-## Etapa 1 — catálogo de materiais e histórico de preços (r8.8.1)
+## Etapa 1 — catálogo de materiais e histórico de preços (r8.8.0)
 
 Ajustes → Materiais apresenta o catálogo agrupado por categoria, com nome, unidade, fornecedor opcional, indicação de variação por cor e preço aplicável hoje em `America/Sao_Paulo`. O preço é a vigência de maior data inicial menor ou igual à data consultada. Sem preço aplicável, a tela mostra “A conferir”; um preço zero explicitamente informado aparece como R$ 0,000. Vigências futuras ficam identificadas no histórico. Materiais inativos continuam visíveis, com histórico somente leitura.
 
